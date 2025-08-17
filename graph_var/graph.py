@@ -112,7 +112,8 @@ class PangenomeGraph(nx.DiGraph):
                  ref_name: str = 'GRCh38',
                  edgeinfo_file: str = None,
                  nodeinfo_file: str = None,
-                 log_path: str = None
+                 log_path: str = None,
+                 return_walks: bool = False,
                  ):
         """
         Reads a .gfa file into a PangenomeGraph object.
@@ -136,6 +137,7 @@ class PangenomeGraph(nx.DiGraph):
         walk_end_nodes = []
 
         print("Reading gfa file")
+        walks = []
         for parts in read_gfa_line_by_line(gfa_file, ref_name=ref_name):
             if parts[0] == 'S':
                 binode, sequence = parts[1], parts[2]
@@ -147,8 +149,9 @@ class PangenomeGraph(nx.DiGraph):
                 G.add_biedge(node1, node2)
             elif parts[0] == 'W':
                 hit_reference = parts[1]
-                # sample_name = parts[2]
                 walk = parts[3]
+                if return_walks:
+                    walks.append(walk)
                 if hit_reference:
                     assert not G.reference_path, "Reference path already exists"
                     G.add_reference_path(walk)
@@ -199,7 +202,7 @@ class PangenomeGraph(nx.DiGraph):
             if log_path:
                 log_action(log_path, f"Computing positions: {gfa_basename}")
 
-        return G
+        return (G, walks) if return_walks else G
 
 
     def __init__(self,
@@ -375,6 +378,9 @@ class PangenomeGraph(nx.DiGraph):
         for sink_node in sink_nodes:
             self.add_biedge(sink_node, minus_terminus + '_+')
 
+        if self.reference_path == []:
+            self.add_biedge(plus_terminus + '_+', minus_terminus + '_+')
+        
         # reference path is assumed to be in the positive direction
         self.reference_path = [plus_terminus + '_+'] + self.reference_path + [minus_terminus + '_+']
         self.nodes[plus_terminus + '_+']['on_reference_path'] = 1
@@ -394,7 +400,10 @@ class PangenomeGraph(nx.DiGraph):
         as those that are not in the reference tree or its complement.
         """
         # reference tree contains positive-direction nodes only, and no inversion edges
+        # self.add_biedge(self.reference_path[0], self.reference_path[1])
         positive_subgraph = self.subgraph([n for n, direction in self.nodes(data="direction") if direction == 1])
+        print(positive_subgraph.edges())
+        print(self.reference_path)
         self.reference_tree = max_weight_dfs_tree(positive_subgraph, reference_path=self.reference_path)
 
         for edge in positive_subgraph.edges():
