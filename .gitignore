@@ -163,4 +163,4 @@ cython_debug/
 luke/
 *.iml
 *.xml
-*.xml
+data/*
