@@ -1,0 +1,21 @@
+coverage:
+  status:
+    project:
+      default:
+        target: 90%
+        threshold: 1%
+    patch:
+      default:
+        target: 80%
+
+comment:
+  layout: "reach,diff,flags,tree"
+  behavior: default
+  require_changes: false
+
+ignore:
+  - "tests/**"
+  - "scripts/**"
+  - "notebooks/**"
+  - "setup.py"
+  - "graph_var/evaluating_functions.py"  # Can be excluded if not actively used
