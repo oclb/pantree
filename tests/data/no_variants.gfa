@@ -1,0 +1,7 @@
+S	1	ACGT	LN:i:4
+S	2	GGGG	LN:i:4
+S	3	TTTT	LN:i:4
+L	1	+	2	+	0M	L1:i:4	L2:i:4
+L	2	+	3	+	0M	L1:i:4	L2:i:4
+W	ref	0	ref#0#chr0	0	12	>1>2>3	WT:i:1
+W	sample1	1	sample1#1#chr0	0	12	>1>2>3	WT:i:1
