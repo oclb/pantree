@@ -4,6 +4,7 @@ import argparse
 import sys
 import os
 from .graph import PangenomeGraph
+import click
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -43,26 +44,33 @@ def parse_args():
     
     return parser.parse_args()
 
-def main():
-    args = parse_args()
+@click.command()
+@click.argument("gfa_file")
+@click.argument("vcf_file")
+@click.option("--chr-id", default="chr0")
+@click.option("--ref-name", default="GRCh38")
+@click.option("--no-genotypes", "--no-genotypes", is_flag=True)
+def main(gfa_file, vcf_file, chr_id, ref_name, no_genotypes):
     
     # Check if input file exists
-    if not os.path.exists(args.gfa_file):
-        print(f"Error: GFA file '{args.gfa_file}' not found", file=sys.stderr)
+    if not os.path.exists(gfa_file):
+        print(f"Error: GFA file '{gfa_file}' not found", file=sys.stderr)
         sys.exit(1)
     
     # Load the graph
-    print(f"Loading GFA file: {args.gfa_file}")
+    print(f"Loading GFA file: {gfa_file}")
     G = PangenomeGraph.from_gfa_line_by_line(
-        args.gfa_file,
-        ref_name=args.ref_name
+        gfa_file,
+        ref_name=ref_name
     )
     
     # Generate VCF
-    if args.no_genotypes:
-        G.write_vcf(None, args.vcf_file, args.chr_id)
+    if no_genotypes:
+        G.write_vcf(None, vcf_file, chr_id)
     else:
-        G.write_vcf(args.gfa_file, args.vcf_file, args.chr_id)
+        G.write_vcf(gfa_file, vcf_file, chr_id)
+    
+    print(f"Wrote VCF file: {vcf_file}")
 
 if __name__ == "__main__":
     main()
