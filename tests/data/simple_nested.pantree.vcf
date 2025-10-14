@@ -1,0 +1,19 @@
+##fileformat=VCFv4.2
+##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
+##FORMAT=<ID=CR,Number=.,Type=Integer,Description="The reference allele count for each sample's haplotypes">
+##FORMAT=<ID=CA,Number=.,Type=Integer,Description="The alternative allele count for each sample's haplotypes">
+##INFO=<ID=NR,Number=1,Type=String,Description="Non-reference allele">
+##INFO=<ID=VT,Number=1,Type=String,Description="Variant type">
+##INFO=<ID=DR,Number=2,Type=Integer,Description="Distance from reference (variant edge's two nodes)">
+##INFO=<ID=RC,Number=1,Type=Integer,Description="The REF allele count">
+##INFO=<ID=AC,Number=A,Type=Integer,Description="The ALT allele count">
+##INFO=<ID=AN,Number=1,Type=Integer,Description="Total number of alleles in called genotypes">
+##INFO=<ID=PV,Number=2,Type=Integer,Description="Position of variant edge's two nodes">
+##INFO=<ID=TR_MOTIF,Number=1,Type=String,Description="Tandem repeat motif">
+##INFO=<ID=NIA,Number=1,Type=Integer,Description="Nearly identical alleles (1=yes, 0=no)">
+##contig=<ID=chr0>
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	ref	sample1	sample2
+chr0	6	>3>4	GGCAC	CTTAG	60	PASS	NR=.;VT=MNP;DR=5,0;RC=2;AC=3;AN=5;PV=5,16;TR_MOTIF=.;NIA=0	GT:CR:CA	.|.:.,.:.,.	0|1:1,0:0,1	1|1:0,0:1,1
+chr0	16	>8>9	C	CCGGTAGGTAC	60	PASS	NR=.;VT=INS;DR=10,0;RC=2;AC=3;AN=5;PV=16,20;TR_MOTIF=.;NIA=0	GT:CR:CA	.|.:.,.:.,.	1|0:0,1:1,0	1|1:0,0:1,1
+chr0	17	>7>8	.	A	60	PASS	NR=G;VT=SNP;DR=6,10;RC=2;AC=1;AN=3;PV=16,16;TR_MOTIF=.;NIA=0	GT:CR:CA	.|.:.,.:.,.	0|.:1,0:0,0	1|0:0,1:1,0
+chr0	20	>9>11	ATCATG	A	60	PASS	NR=.;VT=DEL;DR=0,0;RC=2;AC=2;AN=4;PV=20,29;TR_MOTIF=.;NIA=0	GT:CR:CA	.|.:.,.:.,.	.|0:0,1:0,0	1|1:0,0:1,1
