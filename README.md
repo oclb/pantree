@@ -5,13 +5,14 @@
 - [Installation](#installation)
 - [Usage](#usage)
 - [Command Line Interface](#command-line-interface)
+- [Testing](#testing)
 
 ## Introduction
 `pantree` is a work in progress. If you use our code, please do reach out with questions and feedback.
 
 ## Usage
 ```python
-from graph import PangenomeGraph
+from graph_var import PangenomeGraph
 
 # Read a .gfa file
 gfa_path = "/path/to/graph.gfa"
@@ -65,8 +66,4 @@ pantree input.gfa --out-nodeinfo nodes.csv --out-edgeinfo edges.csv
 # Analyze with specific reference path and chromosome ID
 pantree input.gfa --vcf output.vcf --ref-path-index 2 --chr-id chr20
 
-# Print variant summary to console
-pantree input.gfa --summary
-
-# Write variant summary to a file
-pantree input.gfa --summary summary.txt
+```
