@@ -207,15 +207,19 @@ def nearly_identical_alleles(allele1: str, allele2: str, threshold: int = 10):
     Args:
         allele1: String representation of an allele
         allele2: String representation of an allele
+        threshold: Minimum length threshold - only applies the check if both alleles are >= threshold
     
     Returns:
         True if the alleles are nearly identical, False otherwise
     """
-    if len(allele1) + len(allele2) < 2 * threshold:
-        return False
+    # Only apply threshold check if both sequences are long enough
+    # This prevents filtering out short sequences that are legitimately nearly identical
+    if len(allele1) >= threshold and len(allele2) >= threshold:
+        if len(allele1) + len(allele2) < 2 * threshold:
+            return False
 
     length_difference = len(allele1) - len(allele2)
-    if abs(length_difference)> 1:
+    if abs(length_difference) > 1:
         return False
 
     mismatches = 0
