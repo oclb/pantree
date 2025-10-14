@@ -469,32 +469,32 @@ class PangenomeGraph(nx.DiGraph):
                     continue
                 haplotype_name = parts[2]
                 sample_name = parts[2].split('_')[0]
-            if pre_sample_name is not None and sample_name != pre_sample_name:
-                # print("Sample:", pre_sample_name, sample_name)
-                # print_current_memory_usage()
-                assert sample_name not in sample_vcf_info_dict
-                sample_missing_dict = {hap: set(self.get_missing_variants(lc, exclude_terminus)) for hap, lc in
-                                       sample_lc_dict.items()}
-                sample_info_list = self.get_sample_vcf_info(pre_sample_name,
-                                                            sample_cr_dict,
-                                                            sample_ca_dict,
-                                                            sample_missing_dict,
-                                                            exclude_terminus=exclude_terminus)
-                sample_vcf_info_dict[pre_sample_name] = sample_info_list
+                if pre_sample_name is not None and sample_name != pre_sample_name:
+                    # print("Sample:", pre_sample_name, sample_name)
+                    # print_current_memory_usage()
+                    assert sample_name not in sample_vcf_info_dict
+                    sample_missing_dict = {hap: set(self.get_missing_variants(lc, exclude_terminus)) for hap, lc in
+                                           sample_lc_dict.items()}
+                    sample_info_list = self.get_sample_vcf_info(pre_sample_name,
+                                                                sample_cr_dict,
+                                                                sample_ca_dict,
+                                                                sample_missing_dict,
+                                                                exclude_terminus=exclude_terminus)
+                    sample_vcf_info_dict[pre_sample_name] = sample_info_list
 
-                sample_cr_dict.clear()
-                sample_ca_dict.clear()
-                sample_lc_dict.clear()
+                    sample_cr_dict.clear()
+                    sample_ca_dict.clear()
+                    sample_lc_dict.clear()
 
-            walk = parts[3]
-            cr_dict, ca_dict, linear_coverage = self.genotype(walk, return_linear_coverage=True)
+                walk = parts[3]
+                cr_dict, ca_dict, linear_coverage = self.genotype(walk, return_linear_coverage=True)
 
-            sample_cr_dict[haplotype_name] = merge_dicts([sample_cr_dict[haplotype_name], cr_dict])
-            sample_ca_dict[haplotype_name] = merge_dicts([sample_ca_dict[haplotype_name], ca_dict])
+                sample_cr_dict[haplotype_name] = merge_dicts([sample_cr_dict[haplotype_name], cr_dict])
+                sample_ca_dict[haplotype_name] = merge_dicts([sample_ca_dict[haplotype_name], ca_dict])
 
-            sample_lc_dict[haplotype_name].append(linear_coverage)
+                sample_lc_dict[haplotype_name].append(linear_coverage)
 
-            pre_sample_name = sample_name
+                pre_sample_name = sample_name
 
             sample_missing_dict = {hap: set(self.get_missing_variants(lc, exclude_terminus)) for hap, lc in
                                 sample_lc_dict.items()}
