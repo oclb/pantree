@@ -129,6 +129,7 @@ def read_gfa_line_by_line(filename: str, ref_name='GRCh38'):
             # yield 'L', edge
             yield (parts[0], edge)
         elif parts[0] == 'W':
+            # GFA1.1 W-line format: W SampleId HapIndex SeqId SeqStart SeqEnd Walk
             if parts[1] == ref_name:
                 hit_reference = True
             else:
@@ -149,7 +150,38 @@ def read_gfa_line_by_line(filename: str, ref_name='GRCh38'):
                         # For '>', generate IDs with '+'
                         node_ids.append(f'{match}_+')
             # node_ids.append('end_node')
-            # yield 'W', sample_name, walk
+            # yield 'W', hit_reference, sample_name, walk
+            yield (parts[0], hit_reference, sample_name, node_ids)
+        elif parts[0] == 'P':
+            # GFA1.0 P-line format: P PathName SegmentNames Overlaps
+            # Convert P-line to W-line format for compatibility
+            path_name = parts[1]
+            if path_name == ref_name:
+                hit_reference = True
+            else:
+                hit_reference = False
+            
+            # Use path_name as sample_name (format: PathName_0 to mimic W-line format)
+            sample_name = path_name + '_0'
+            
+            # Parse segment names (format: "11+,12-,13+" -> node IDs)
+            segment_names = parts[2]
+            node_ids = []
+            
+            # Split by comma and parse each segment
+            for segment in segment_names.split(','):
+                segment = segment.strip()
+                if not segment:
+                    continue
+                # Last character is orientation (+/-)
+                node = segment[:-1]
+                orientation = segment[-1]
+                if orientation == '+':
+                    node_ids.append(f'{node}_+')
+                elif orientation == '-':
+                    node_ids.append(f'{node}_-')
+            
+            # Yield in same format as W-line for compatibility
             yield (parts[0], hit_reference, sample_name, node_ids)
 
 def save_graph_to_pkl(G, path, compressed=False):
