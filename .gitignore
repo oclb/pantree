@@ -165,6 +165,7 @@ luke/
 *.xml
 data/*
 scripts/
+notebooks/
 issues.md
 .idea/*
 .DS_Store
