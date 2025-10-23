@@ -3,12 +3,57 @@
 ## Table of Contents
 - [Introduction](#introduction)
 - [Installation](#installation)
-- [Usage](#usage)
 - [Command Line Interface](#command-line-interface)
-- [Testing](#testing)
+- [Usage](#usage)
 
 ## Introduction
+`pantree` converts a pangenome graph `.gfa` file into a `.vcf` file containing variants identified in the graph. It creates a reference tree and defines variants as edges that are not in the reference tree. For more information, please see our [preprint](https://www.biorxiv.org/content/10.1101/2025.08.04.668502v1).
+
+`pantree` supports both **GFA1.0** (P-lines) and **GFA1.1** (W-lines) formats, making it compatible with graphs from various tools including PGGB and Minigraph-Cactus.
+
 `pantree` is a work in progress. If you use our code, please do reach out with questions and feedback.
+
+## Installation
+
+You can install `pantree` using `uv`:
+
+```bash
+git clone https://github.com/oclb/graph_var.git
+cd graph_var
+uv venv
+uv sync
+```
+
+## Command Line Interface
+
+```bash
+pantree <gfa_file> <vcf_file> [options]
+```
+
+### Required Arguments
+- `gfa_file`: Path to the input GFA file containing the pangenome graph
+- `vcf_file`: Output path for VCF file
+
+### Optional Arguments
+- `--chr-id`: Chromosome ID for VCF file (default: "chr0")
+- `--ref-name`: Reference name to use (default: "GRCh38")
+- `--no-genotypes`: Skip writing genotype information to VCF
+
+### Example Usage
+```bash
+# Basic usage - analyze a GFA file and output VCF
+pantree input.gfa output.vcf
+
+# Specify chromosome ID
+pantree input.gfa output.vcf --chr-id chr20
+
+# Use a different reference name
+pantree input.gfa output.vcf --ref-name hg19
+
+# Generate VCF without genotype information
+pantree input.gfa output.vcf --no-genotypes
+
+```
 
 ## Usage
 ```python
@@ -32,38 +77,5 @@ edge_type_count: dict = G.variant_edges_summary()
 # Get the genotype of a walk, then reconstruct edge visit counts
 genotype: dict = G.genotype(walks[0])
 edge_visit_counts: dict = G.count_edge_visits(genotype)
-
-```
-
-## Command Line Interface
-
-```bash
-pantree <gfa_file> [options]
-```
-
-### Required Arguments
-- `gfa_file`: Path to the input GFA file containing the pangenome graph
-
-### Optional Arguments
-- `--nodeinfo`: Path to input node info file (CSV format)
-- `--edgeinfo`: Path to input edge info file (CSV format)
-- `--out-nodeinfo`: Output path for node info file (CSV format)
-- `--out-edgeinfo`: Output path for edge info file (CSV format)
-- `--vcf`: Output path for VCF file
-- `--chr-id`: Chromosome ID for VCF file (default: "chr0")
-- `--ref-path-index`: Index of the reference path (default: None, will try to find GRCh38)
-- `--summary [file]`: Print summary of variant types. If a file path is provided, write the summary to that file instead of stdout
-
-### Example Usage
-```bash
-# Basic usage - analyze a GFA file and output VCF
-# Will automatically try to find GRCh38 reference path
-pantree input.gfa --vcf output.vcf
-
-# Generate node and edge info files (CSV format)
-pantree input.gfa --out-nodeinfo nodes.csv --out-edgeinfo edges.csv
-
-# Analyze with specific reference path and chromosome ID
-pantree input.gfa --vcf output.vcf --ref-path-index 2 --chr-id chr20
 
 ```
