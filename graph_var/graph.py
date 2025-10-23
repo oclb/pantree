@@ -154,8 +154,9 @@ class PangenomeGraph(nx.DiGraph):
         print("Reading gfa file - second pass: walks")
         # Second pass: process walks (now that all edges exist)
         # Walks are processed one at a time to avoid loading all walks into memory
+        # Supports both W-lines (GFA1.1) and P-lines (GFA1.0)
         for parts in read_gfa_line_by_line(gfa_file, ref_name=ref_name):
-            if parts[0] == 'W':
+            if parts[0] in ('W', 'P'):
                 hit_reference = parts[1]
                 walk = parts[3]
                 if return_walks:
@@ -469,11 +470,12 @@ class PangenomeGraph(nx.DiGraph):
 
         sample_ids = []
         # Memory efficient way to read gfa data
+        # Supports both W-lines (GFA1.1) and P-lines (GFA1.0)
         if gfa_path:
             print("Computing genotype for haplotypes")
             pre_sample_name = None
             for parts in read_gfa_line_by_line(gfa_path):
-                if parts[0] != 'W':
+                if parts[0] not in ('W', 'P'):
                     continue
                 haplotype_name = parts[2]
                 sample_name = parts[2].split('_')[0]
