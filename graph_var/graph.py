@@ -136,8 +136,11 @@ class PangenomeGraph(nx.DiGraph):
         walk_start_nodes = []
         walk_end_nodes = []
 
-        print("Reading gfa file")
+        print("Reading gfa file - first pass: nodes and edges")
         walks = []
+        # First pass: add all nodes and edges
+        # This ensures edges exist before we compute edge weights in the second pass,
+        # which is necessary for GFA files where W-lines appear before L-lines
         for parts in read_gfa_line_by_line(gfa_file, ref_name=ref_name):
             if parts[0] == 'S':
                 binode, sequence = parts[1], parts[2]
@@ -147,7 +150,12 @@ class PangenomeGraph(nx.DiGraph):
                 node1 = biedge[0] + '_' + biedge[2]
                 node2 = biedge[1] + '_' + biedge[3]
                 G.add_biedge(node1, node2)
-            elif parts[0] == 'W':
+
+        print("Reading gfa file - second pass: walks")
+        # Second pass: process walks (now that all edges exist)
+        # Walks are processed one at a time to avoid loading all walks into memory
+        for parts in read_gfa_line_by_line(gfa_file, ref_name=ref_name):
+            if parts[0] == 'W':
                 hit_reference = parts[1]
                 walk = parts[3]
                 if return_walks:
@@ -611,7 +619,7 @@ class PangenomeGraph(nx.DiGraph):
 
                 file.write('\t'.join(allele_data_list) + '\n')
         if log_path:
-            log_action(log_path, f"Writing vcf: {gfa_basename}")
+            log_action(log_path, f"Writing vcf: {vcf_filename}")
 
     def get_sample_vcf_info(self,
                             sample_name,
