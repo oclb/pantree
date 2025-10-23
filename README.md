@@ -9,8 +9,6 @@
 ## Introduction
 `pantree` converts a pangenome graph `.gfa` file into a `.vcf` file containing variants identified in the graph. It creates a reference tree and defines variants as edges that are not in the reference tree. For more information, please see our [preprint](https://www.biorxiv.org/content/10.1101/2025.08.04.668502v1).
 
-`pantree` supports both **GFA1.0** (P-lines) and **GFA1.1** (W-lines) formats, making it compatible with graphs from various tools including PGGB and Minigraph-Cactus.
-
 `pantree` is a work in progress. If you use our code, please do reach out with questions and feedback.
 
 ## Installation
