@@ -164,3 +164,8 @@ luke/
 *.iml
 *.xml
 data/*
+scripts/
+issues.md
+.idea/*
+.DS_Store
+output/*
