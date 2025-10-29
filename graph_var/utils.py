@@ -6,6 +6,7 @@ import time
 import os
 import psutil
 from datetime import datetime
+from dataclasses import dataclass
 
 def sequence_complement(s: str) -> str:
     def _base_complement(letter: str) -> str:
@@ -111,78 +112,105 @@ def read_gfa(filename, ref_name='GRCh38'):
 
   return data_dict
 
-def read_gfa_line_by_line(filename: str, ref_name='GRCh38'):
-    pattern = r'\w+|[<>]'
+@dataclass
+class GFAWalkLine:
+    hap_name: str
+    contig_start: int
+    walk: list[str]
 
+    @staticmethod
+    def _get_hap_name(sample_name: str, hap_index: int) -> str:
+        if int(hap_index) == 0:
+            return sample_name
+        
+        return sample_name + '_' + str(hap_index)
+
+    @classmethod
+    def from_parts_P(cls, parts: list[str]):
+        hap_name = parts[1]
+        contig_start = 0
+        walk = cls._parse_P_walk(parts[2])
+        return cls(hap_name, contig_start, walk)
+
+    @classmethod
+    def from_parts_W(cls, parts: list[str]):
+        hap_name = cls._get_hap_name(parts[1], parts[2])
+        contig_start = int(parts[4]) if parts[4] != '*' else 0
+        walk = cls._parse_W_walk(parts[6])
+        return cls(hap_name, contig_start, walk)
+
+    @staticmethod
+    def _parse_P_walk(segment_names: str) -> list[str]:
+        node_ids = []
+        for segment in segment_names.split(','):
+            segment = segment.strip()
+            if not segment:
+                continue
+            # Last character is orientation (+/-)
+            node = segment[:-1]
+            orientation = segment[-1]
+            if orientation == '+':
+                node_ids.append(f'{node}_+')
+            elif orientation == '-':
+                node_ids.append(f'{node}_-')
+        return node_ids
+
+    @staticmethod
+    def _parse_W_walk(walk: str) -> list[str]:
+        pattern = r'\w+|[<>]'
+        matches = re.findall(pattern, walk)
+        node_ids = []
+        for i, match in enumerate(matches):
+            if match not in ['<', '>']:  # If the match is a word
+                if matches[i - 1] == '<':
+                    # For '<', generate IDs with '-'
+                    node_ids.append(f'{match}_-')
+                elif matches[i - 1] == '>':
+                    # For '>', generate IDs with '+'
+                    node_ids.append(f'{match}_+')
+        return node_ids
+
+@dataclass
+class GFANodeLine:
+    node_id: str
+    sequence: str
+
+    @classmethod
+    def from_parts(cls, parts: list[str]):
+        return cls(parts[1], parts[2])
+
+@dataclass
+class GFAEdgeLine:
+    u: str
+    v: str
+    
+    @classmethod
+    def from_parts(cls, parts: list[str]):
+        u = parts[1] + '_' + parts[2]
+        v = parts[3] + '_' + parts[4]
+        return cls(u, v)
+
+line_getters = {
+    'S': GFANodeLine.from_parts,
+    'L': GFAEdgeLine.from_parts,
+    'W': GFAWalkLine.from_parts_W,
+    'P': GFAWalkLine.from_parts_P,
+}
+
+def read_gfa_line_by_line(filename: str):
     if filename.endswith('.gz'):
-        file = gzip.open(filename, 'rt')
+        opener = gzip.open
     else:
-        file = open(filename, 'r')
+        opener = open
 
-    for line in file:
-        parts = line.strip().split('\t')
-        if parts[0] == 'S':
-            # yield 'S', node_id, sequence
-            yield (parts[0], parts[1], parts[2])
-        elif parts[0] == 'L':
-            edge = (parts[1], parts[3], parts[2], parts[4])
-            # yield 'L', edge
-            yield (parts[0], edge)
-        elif parts[0] == 'W':
-            # GFA1.1 W-line format: W SampleId HapIndex SeqId SeqStart SeqEnd Walk
-            if parts[1] == ref_name:
-                hit_reference = True
-            else:
-                hit_reference = False
-            sample_name = parts[1] + '_' + parts[2]
-            p = parts[6]
-            matches = re.findall(pattern, p)
-            # List to store node IDs
-            node_ids = []
-
-            # Iterate through the matches to generate node IDs
-            for i, match in enumerate(matches):
-                if match not in ['<', '>']:  # If the match is a word
-                    if matches[i - 1] == '<':
-                        # For '<', generate IDs with '-'
-                        node_ids.append(f'{match}_-')
-                    elif matches[i - 1] == '>':
-                        # For '>', generate IDs with '+'
-                        node_ids.append(f'{match}_+')
-            # node_ids.append('end_node')
-            # yield 'W', hit_reference, sample_name, walk
-            yield (parts[0], hit_reference, sample_name, node_ids)
-        elif parts[0] == 'P':
-            # GFA1.0 P-line format: P PathName SegmentNames Overlaps
-            # Convert P-line to W-line format for compatibility
-            path_name = parts[1]
-            if path_name == ref_name:
-                hit_reference = True
-            else:
-                hit_reference = False
-            
-            # Use path_name as sample_name (format: PathName_0 to mimic W-line format)
-            sample_name = path_name + '_0'
-            
-            # Parse segment names (format: "11+,12-,13+" -> node IDs)
-            segment_names = parts[2]
-            node_ids = []
-            
-            # Split by comma and parse each segment
-            for segment in segment_names.split(','):
-                segment = segment.strip()
-                if not segment:
-                    continue
-                # Last character is orientation (+/-)
-                node = segment[:-1]
-                orientation = segment[-1]
-                if orientation == '+':
-                    node_ids.append(f'{node}_+')
-                elif orientation == '-':
-                    node_ids.append(f'{node}_-')
-            
-            # Yield in same format as W-line for compatibility
-            yield (parts[0], hit_reference, sample_name, node_ids)
+    with opener(filename, 'rt') as file:
+        for line in file:
+            parts = line.strip().split('\t')
+            # Skip empty lines and header lines
+            if not parts[0] or parts[0] == 'H' or parts[0] == 'C':
+                continue
+            line_getter = line_getters[parts[0]]
+            yield line_getter(parts)
 
 def save_graph_to_pkl(G, path, compressed=False):
     if compressed:

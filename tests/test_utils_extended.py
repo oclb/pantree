@@ -125,6 +125,8 @@ class TestGFAReading(unittest.TestCase):
     
     def test_read_gfa_line_by_line(self):
         """Test reading GFA file line by line"""
+        from graph_var.utils import GFANodeLine, GFAEdgeLine, GFAWalkLine
+        
         test_dir = os.path.dirname(__file__)
         gfa_file = os.path.join(test_dir, "data", "simple_nested.gfa")
         
@@ -132,31 +134,40 @@ class TestGFAReading(unittest.TestCase):
         links = []
         walks = []
         
-        for parts in read_gfa_line_by_line(gfa_file, ref_name='ref'):
-            if parts[0] == 'S':
-                segments.append(parts)
-            elif parts[0] == 'L':
-                links.append(parts)
-            elif parts[0] == 'W':
-                walks.append(parts)
+        for line_obj in read_gfa_line_by_line(gfa_file):
+            if isinstance(line_obj, GFANodeLine):
+                segments.append(line_obj)
+            elif isinstance(line_obj, GFAEdgeLine):
+                links.append(line_obj)
+            elif isinstance(line_obj, GFAWalkLine):
+                walks.append(line_obj)
         
         # Should have segments, links, and walks
         self.assertGreater(len(segments), 0)
         self.assertGreater(len(links), 0)
         self.assertGreater(len(walks), 0)
         
-        # Check segment format
+        # Check segment format (GFANodeLine dataclass)
         for seg in segments:
-            self.assertEqual(seg[0], 'S')
-            self.assertIsInstance(seg[1], str)  # node_id
-            self.assertIsInstance(seg[2], str)  # sequence
+            self.assertIsInstance(seg, GFANodeLine)
+            self.assertIsInstance(seg.node_id, str)
+            self.assertIsInstance(seg.sequence, str)
         
-        # Check walk format
+        # Check link format (GFAEdgeLine dataclass)
+        for link in links:
+            self.assertIsInstance(link, GFAEdgeLine)
+            self.assertIsInstance(link.u, str)
+            self.assertIsInstance(link.v, str)
+        
+        # Check walk format (GFAWalkLine dataclass)
         for walk in walks:
-            self.assertEqual(walk[0], 'W')
-            self.assertIsInstance(walk[1], bool)  # hit_reference
-            self.assertIsInstance(walk[2], str)   # sample_name
-            self.assertIsInstance(walk[3], list)  # node_ids
+            self.assertIsInstance(walk, GFAWalkLine)
+            self.assertIsInstance(walk.hap_name, str)
+            self.assertIsInstance(walk.walk, list)
+            # Check that walk contains node IDs in the expected format
+            for node_id in walk.walk:
+                self.assertIsInstance(node_id, str)
+                self.assertTrue(node_id.endswith('_+') or node_id.endswith('_-'))
 
 
 if __name__ == '__main__':

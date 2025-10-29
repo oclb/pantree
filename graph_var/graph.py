@@ -12,7 +12,10 @@ from .utils import (
     nearly_identical_alleles,
     _node_recover,
     merge_dicts,
-    log_action
+    log_action,
+    GFAWalkLine,
+    GFANodeLine,
+    GFAEdgeLine,
 )
 from .search_tree import assign_node_directions, max_weight_dfs_tree
 import os
@@ -110,25 +113,22 @@ class PangenomeGraph(nx.DiGraph):
     def from_gfa_line_by_line(cls,
                  gfa_file: str,
                  ref_name: str = 'GRCh38',
-                 edgeinfo_file: str = None,
-                 nodeinfo_file: str = None,
                  log_path: str = None,
                  return_walks: bool = False,
+                 priority_dict: dict[str, int] = None, # TODO give default
                  ):
         """
         Reads a .gfa file into a PangenomeGraph object.
         :param gfa_file: path to a file name ending in .gfa
-        :param edgeinfo_file: path to a previously-computed .edgeinfo file, to avoid re-doing work
-        :param nodeinfo_file: path to a previously-computed .nodeinfo file, to avoid re-doing work
         """
         if log_path:
             log_action(log_path, f"Start constructing pangenome graph")
 
         if not os.path.exists(gfa_file):
             raise FileNotFoundError(gfa_file)
-        if edgeinfo_file:
-            if not os.path.exists(edgeinfo_file):
-                raise FileNotFoundError(edgeinfo_file)
+        
+        if priority_dict is None:
+            priority_dict = {ref_name: 0}
 
         G = cls()
 
@@ -138,48 +138,31 @@ class PangenomeGraph(nx.DiGraph):
 
         print("Reading gfa file - first pass: nodes and edges")
         walks = []
-        # First pass: add all nodes and edges
-        # This ensures edges exist before we compute edge weights in the second pass,
-        # which is necessary for GFA files where W-lines appear before L-lines
-        for parts in read_gfa_line_by_line(gfa_file, ref_name=ref_name):
-            if parts[0] == 'S':
-                binode, sequence = parts[1], parts[2]
-                G.add_binode(binode, sequence)
-            elif parts[0] == 'L':
-                biedge = parts[1]
-                node1 = biedge[0] + '_' + biedge[2]
-                node2 = biedge[1] + '_' + biedge[3]
-                G.add_biedge(node1, node2)
+        for line in read_gfa_line_by_line(gfa_file):
+            if type(line) is GFANodeLine:
+                G.add_binode(line.node_id, line.sequence)
+            if type(line) is GFAEdgeLine:
+                G.add_biedge(line.u, line.v)
 
         print("Reading gfa file - second pass: walks")
-        # Second pass: process walks (now that all edges exist)
-        # Walks are processed one at a time to avoid loading all walks into memory
-        # Supports both W-lines (GFA1.1) and P-lines (GFA1.0)
-        for parts in read_gfa_line_by_line(gfa_file, ref_name=ref_name):
-            if parts[0] in ('W', 'P'):
-                hit_reference = parts[1]
-                walk = parts[3]
-                hap_name    = parts[2] 
-                walk_id      = int(parts[4]) if len(parts) > 4 else 0
-                contig_name  = parts[5] if len(parts) > 5 else parts[2] 
-                contig_start = int(parts[6]) if len(parts) > 6 and str(parts[6]).isdigit() else 0
-                # Priority: lower is higher priority
-                hap_priority = {"GRCh38": 0, "CHM13": 1, "HG002#1": 2, "HG002#2": 2}
-                hap_rank = hap_priority.get(hap_name, 999) 
-                hap_id = hap_rank 
+        for line in read_gfa_line_by_line(gfa_file):
+            if type(line) is not GFAWalkLine:
+                continue
+            print(line.hap_name)
+            hit_reference = line.hap_name == ref_name
+            if hit_reference:
+                assert not G.reference_path, "Reference path already exists"
+                G.add_reference_path(line.walk)
+            
+            G.update_haplotype_positions(line, priority_dict)
                 
-                G.updateposition([walk], hap_id, contig_name, walk_id, hap_rank, contig_start)
-                
-                if return_walks:
-                    walks.append(walk)
-                if hit_reference:
-                    assert not G.reference_path, "Reference path already exists"
-                    G.add_reference_path(walk)
-
-                walk_start_nodes.append(walk[0])
-                walk_end_nodes.append(walk[-1])
-                if not edgeinfo_file:
-                    G.compute_edge_weights([walk])
+            if return_walks:
+                walks.append(line.walk)
+            
+            walk_start_nodes.append(line.walk[0])
+            walk_end_nodes.append(line.walk[-1])
+            
+            G.compute_edge_weights([line.walk])
 
         if log_path:
             log_action(log_path, f"Reading gfa file: {gfa_basename}")
@@ -187,40 +170,26 @@ class PangenomeGraph(nx.DiGraph):
         print("Num of binodes:", (len(G.nodes) / 2))
         print("Num of biedges:", (len(G.edges) / 2))
 
-        if nodeinfo_file:
-            print("Reading nodeinfo file")
-            G.read_nodeinfo(nodeinfo_file)
-            if log_path:
-                log_action(log_path, f"Reading nodeinfo file: {gfa_basename}")
-        else:
-            print("Assigning node directions")
-            assign_node_directions(G, G.reference_path)
-            if log_path:
-                log_action(log_path, f"Assigning node directions: {gfa_basename}")
+        assign_node_directions(G, G.reference_path)
+        if log_path:
+            log_action(log_path, f"Assigning node directions: {gfa_basename}")
 
         G.add_terminal_nodes(walk_start_nodes=walk_start_nodes, walk_end_nodes=walk_end_nodes)
-        if edgeinfo_file:
-            print("Reading edgeinfo file")
-            G.read_edgeinfo(edgeinfo_file)
-            if log_path:
-                log_action(log_path, f"Reading edgeinfo file: {gfa_basename}")
-        else:
-            print("Computing reference tree")
-            G.compute_reference_tree()
-            if log_path:
-                log_action(log_path, f"Computing reference tree: {gfa_basename}")
+        print("Computing reference tree")
+        G.compute_reference_tree()
+        if log_path:
+            log_action(log_path, f"Computing reference tree: {gfa_basename}")
 
-            print("Computing branch points")
-            G.annotate_branch_points()
-            if log_path:
-                log_action(log_path, f"Computing branch points: {gfa_basename}")
+        print("Computing branch points")
+        G.annotate_branch_points()
+        if log_path:
+            log_action(log_path, f"Computing branch points: {gfa_basename}")
 
-        if not nodeinfo_file:
-            print("Computing positions")
-            G.compute_binode_positions()
-            G.compute_binode_right_positions()
-            if log_path:
-                log_action(log_path, f"Computing positions: {gfa_basename}")
+        print("Computing positions")
+        G.compute_binode_positions()
+        G.compute_binode_right_positions()
+        if log_path:
+            log_action(log_path, f"Computing positions: {gfa_basename}")
 
         return (G, walks) if return_walks else G
 
@@ -485,11 +454,12 @@ class PangenomeGraph(nx.DiGraph):
         if gfa_path:
             print("Computing genotype for haplotypes")
             pre_sample_name = None
-            for parts in read_gfa_line_by_line(gfa_path):
-                if parts[0] not in ('W', 'P'):
+            for line in read_gfa_line_by_line(gfa_path):
+                if type(line) is not GFAWalkLine:
                     continue
-                haplotype_name = parts[2]
-                sample_name = parts[2].split('_')[0]
+                walk = line.walk
+                haplotype_name = line.hap_name
+                sample_name = line.hap_name.split('_')[0]
                 if pre_sample_name is not None and sample_name != pre_sample_name:
                     # print("Sample:", pre_sample_name, sample_name)
                     # print_current_memory_usage()
@@ -507,7 +477,6 @@ class PangenomeGraph(nx.DiGraph):
                     sample_ca_dict.clear()
                     sample_lc_dict.clear()
 
-                walk = parts[3]
                 cr_dict, ca_dict, linear_coverage = self.genotype(walk, return_linear_coverage=True)
 
                 sample_cr_dict[haplotype_name] = merge_dicts([sample_cr_dict[haplotype_name], cr_dict])
@@ -866,25 +835,33 @@ class PangenomeGraph(nx.DiGraph):
 
     def positive_variant_edge(self, edge: tuple):
         return edge if self.direction(edge[0]) == 1 or self.is_inversion(edge) else edge_complement(edge)
-
-    def updateposition(self, walks: list[list[str]], hap_id: int, contig_name: str, walk_id: int,hap_rank: int, contig_start: int) -> None:
+        
+    def update_haplotype_positions(self, line: GFAWalkLine, priority_dict: dict[str, int]) -> None:
         """
         For each edge (u->v) in the walks, store:
         primary_edge_pos = ((hap_id, contig_name, walk_id), position_bp)
         Keep only the tuple from the highest-priority hap (smaller hap_rank wins).
         position_bp is the cumulative bp offset at the START of (u->v) within that walk.
         """ 
-        for walk in walks:
-            offset = contig_start
-            for u, v in zip(walk[:-1], walk[1:]):
-                if (u, v) in self.edges:
-                    ed = self.edges[u, v]
-                    if hap_rank < ed.get("primary_edge_priority", 999):
-                        ed["primary_edge_pos"] = ((int(hap_id), str(contig_name), int(walk_id)), int(offset))
-                        ed["primary_edge_priority"] = hap_rank
-                # advance offset by length of u 
-                seq_u = self.nodes[u].get("sequence")
-                offset += 0 if seq_u is None else len(seq_u)
+
+        walk = line.walk
+        hap_name = line.hap_name
+        hap_rank = priority_dict.get(hap_name, 999)
+        offset = line.contig_start
+
+        for u, v in zip(walk[:-1], walk[1:]):
+            if (u, v) not in self.edges:
+                raise ValueError(f'Edge {u} -> {v} not found in graph')
+            seq_u: str = self.nodes[u].get("sequence")
+            if seq_u is None:
+                raise ValueError(f'Node {u} has no sequence')
+            offset += len(seq_u)
+
+            edges = (self.edges[u, v], self.edges[*edge_complement((u, v))])
+            for ed in edges:
+                current_position = ed.get("primary_edge_pos")
+                if current_position is None or hap_rank < priority_dict.get(current_position[0], 1000):
+                    ed["primary_edge_pos"] = (hap_name, offset)
 
 
     def compute_edge_weights(self, walks: list[list[str]]):
