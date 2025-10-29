@@ -159,6 +159,17 @@ class PangenomeGraph(nx.DiGraph):
             if parts[0] in ('W', 'P'):
                 hit_reference = parts[1]
                 walk = parts[3]
+                hap_name    = parts[2] 
+                walk_id      = int(parts[4]) if len(parts) > 4 else 0
+                contig_name  = parts[5] if len(parts) > 5 else parts[2] 
+                contig_start = int(parts[6]) if len(parts) > 6 and str(parts[6]).isdigit() else 0
+                # Priority: lower is higher priority
+                hap_priority = {"GRCh38": 0, "CHM13": 1, "HG002#1": 2, "HG002#2": 2}
+                hap_rank = hap_priority.get(hap_name, 999) 
+                hap_id = hap_rank 
+                
+                G.updateposition([walk], hap_id, contig_name, walk_id, hap_rank, contig_start)
+                
                 if return_walks:
                     walks.append(walk)
                 if hit_reference:
@@ -855,6 +866,26 @@ class PangenomeGraph(nx.DiGraph):
 
     def positive_variant_edge(self, edge: tuple):
         return edge if self.direction(edge[0]) == 1 or self.is_inversion(edge) else edge_complement(edge)
+
+    def updateposition(self, walks: list[list[str]], hap_id: int, contig_name: str, walk_id: int,hap_rank: int, contig_start: int) -> None:
+        """
+        For each edge (u->v) in the walks, store:
+        primary_edge_pos = ((hap_id, contig_name, walk_id), position_bp)
+        Keep only the tuple from the highest-priority hap (smaller hap_rank wins).
+        position_bp is the cumulative bp offset at the START of (u->v) within that walk.
+        """ 
+        for walk in walks:
+            offset = contig_start
+            for u, v in zip(walk[:-1], walk[1:]):
+                if (u, v) in self.edges:
+                    ed = self.edges[u, v]
+                    if hap_rank < ed.get("primary_edge_priority", 999):
+                        ed["primary_edge_pos"] = ((int(hap_id), str(contig_name), int(walk_id)), int(offset))
+                        ed["primary_edge_priority"] = hap_rank
+                # advance offset by length of u 
+                seq_u = self.nodes[u].get("sequence")
+                offset += 0 if seq_u is None else len(seq_u)
+
 
     def compute_edge_weights(self, walks: list[list[str]]):
         """
