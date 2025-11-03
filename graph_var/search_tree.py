@@ -5,7 +5,7 @@ import operator
 # TODO de-duplicate logic between DFS functions
 # TODO add edge-weight priority as tiebreaker 
 # TODO turn haplo_labels list into dict with value = priority, allowing ties
-# 
+# TODO add new positions to VCF
 
 def max_weight_dfs_tree(G: nx.DiGraph,
                         reference_path: list, **kwargs) -> nx.DiGraph:
