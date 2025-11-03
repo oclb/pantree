@@ -17,12 +17,12 @@ from .utils import (
     GFANodeLine,
     GFAEdgeLine,
 )
-from .search_tree import assign_node_directions, max_weight_dfs_tree
+from .search_tree import assign_node_directions, dfs_methods
 import os
 import time
 from collections import defaultdict
 from tqdm import tqdm
-from typing import Any, Optional
+from typing import Any, Optional, Callable
 
 class PangenomeGraph(nx.DiGraph):
     reference_tree: nx.classes.digraph.DiGraph
@@ -115,6 +115,7 @@ class PangenomeGraph(nx.DiGraph):
                  ref_name: str = 'GRCh38',
                  log_path: str = None,
                  return_walks: bool = False,
+                 dfs_method_name: str = 'max_weight',
                  priority_dict: dict[str, int] = None, # TODO give default
                  ):
         """
@@ -126,6 +127,8 @@ class PangenomeGraph(nx.DiGraph):
 
         if not os.path.exists(gfa_file):
             raise FileNotFoundError(gfa_file)
+        
+        dfs_method = dfs_methods[dfs_method_name]
         
         if priority_dict is None:
             priority_dict = {ref_name: 0}
@@ -154,7 +157,7 @@ class PangenomeGraph(nx.DiGraph):
                 assert not G.reference_path, "Reference path already exists"
                 G.add_reference_path(line.walk)
             
-            G.update_haplotype_positions(line, priority_dict)
+            G.update_haplotype_positions(line)
                 
             if return_walks:
                 walks.append(line.walk)
@@ -176,7 +179,7 @@ class PangenomeGraph(nx.DiGraph):
 
         G.add_terminal_nodes(walk_start_nodes=walk_start_nodes, walk_end_nodes=walk_end_nodes)
         print("Computing reference tree")
-        G.compute_reference_tree()
+        G.compute_reference_tree(dfs_method, haplo_priorities=priority_dict)
         if log_path:
             log_action(log_path, f"Computing reference tree: {gfa_basename}")
 
@@ -383,7 +386,7 @@ class PangenomeGraph(nx.DiGraph):
         self.nodes[minus_terminus + '_+']['position'] = chromosome_length
         self.nodes[minus_terminus + '_-']['position'] = chromosome_length
 
-    def compute_reference_tree(self):
+    def compute_reference_tree(self, dfs_method: Callable = dfs_methods['max_weight'], **kwargs):
         """
         Computes the reference tree, a DFS spanning tree of the positively-oriented subgraph; defines variant edges
         as those that are not in the reference tree or its complement.
@@ -393,7 +396,7 @@ class PangenomeGraph(nx.DiGraph):
         positive_subgraph = self.subgraph([n for n, direction in self.nodes(data="direction") if direction == 1])
         print(positive_subgraph.edges())
         print(self.reference_path)
-        self.reference_tree = max_weight_dfs_tree(positive_subgraph, reference_path=self.reference_path)
+        self.reference_tree = dfs_method(positive_subgraph, reference_path=self.reference_path, **kwargs)
 
         for edge in positive_subgraph.edges():
             edge_in_tree = self.reference_tree.has_edge(*edge)
@@ -836,7 +839,7 @@ class PangenomeGraph(nx.DiGraph):
     def positive_variant_edge(self, edge: tuple):
         return edge if self.direction(edge[0]) == 1 or self.is_inversion(edge) else edge_complement(edge)
         
-    def update_haplotype_positions(self, line: GFAWalkLine, priority_dict: dict[str, int]) -> None:
+    def update_haplotype_positions(self, line: GFAWalkLine) -> None:
         """
         For each edge (u->v) in the walks, store:
         primary_edge_pos = ((hap_id, contig_name, walk_id), position_bp)
@@ -846,7 +849,6 @@ class PangenomeGraph(nx.DiGraph):
 
         walk = line.walk
         hap_name = line.hap_name
-        hap_rank = priority_dict.get(hap_name, 999)
         offset = line.contig_start
 
         for u, v in zip(walk[:-1], walk[1:]):
@@ -859,9 +861,7 @@ class PangenomeGraph(nx.DiGraph):
 
             edges = (self.edges[u, v], self.edges[*edge_complement((u, v))])
             for ed in edges:
-                current_position = ed.get("primary_edge_pos")
-                if current_position is None or hap_rank < priority_dict.get(current_position[0], 1000):
-                    ed["primary_edge_pos"] = (hap_name, offset)
+                ed[hap_name] = offset
 
 
     def compute_edge_weights(self, walks: list[list[str]]):

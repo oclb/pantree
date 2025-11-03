@@ -64,8 +64,8 @@ class TestHaplotypePositions(unittest.TestCase):
                 f"but node {u} has position={node_position}"
             )
     
-    def test_all_non_terminal_edges_have_primary_edge_pos(self):
-        """Test that all non-terminal edges have primary_edge_pos assigned"""
+    def test_all_non_terminal_edges_have_haplotype_positions(self):
+        """Test that all non-terminal edges have haplotype position data assigned"""
         edges_without_pos = []
         
         for (u, v), edge_data in self.G.edges.items():
@@ -73,60 +73,47 @@ class TestHaplotypePositions(unittest.TestCase):
             if 'terminus' in u or 'terminus' in v:
                 continue
             
-            if 'primary_edge_pos' not in edge_data:
+            # Check if edge has any haplotype position data (keys that match haplotype names)
+            haplotype_keys = [key for key in edge_data.keys() if key in ['ref', 'sample1_1', 'sample1_2', 'sample2_1', 'sample2_2']]
+            if not haplotype_keys:
                 edges_without_pos.append((u, v))
         
         self.assertEqual(
             len(edges_without_pos),
             0,
-            f"Found {len(edges_without_pos)} non-terminal edges without primary_edge_pos: {edges_without_pos[:5]}"
+            f"Found {len(edges_without_pos)} non-terminal edges without haplotype position data: {edges_without_pos[:5]}"
         )
     
-    def test_primary_edge_pos_format(self):
-        """Test that primary_edge_pos has the correct format (hap_name, position)"""
+    def test_haplotype_position_format(self):
+        """Test that haplotype position data has the correct format (position values)"""
         for (u, v), edge_data in self.G.edges.items():
-            primary_edge_pos = edge_data.get('primary_edge_pos')
+            # Check for haplotype keys
+            haplotype_keys = [key for key in edge_data.keys() if key in ['ref', 'sample1_1', 'sample1_2', 'sample2_1', 'sample2_2']]
             
-            if primary_edge_pos is None:
-                continue
-            
-            # Should be a tuple of (str, int)
-            self.assertIsInstance(
-                primary_edge_pos,
-                tuple,
-                f"primary_edge_pos should be a tuple, got {type(primary_edge_pos)}"
-            )
-            self.assertEqual(
-                len(primary_edge_pos),
-                2,
-                f"primary_edge_pos should have 2 elements, got {len(primary_edge_pos)}"
-            )
-            
-            hap_name, position = primary_edge_pos
-            self.assertIsInstance(
-                hap_name,
-                str,
-                f"Haplotype name should be str, got {type(hap_name)}"
-            )
-            self.assertIsInstance(
-                position,
-                int,
-                f"Position should be int, got {type(position)}"
-            )
-            self.assertGreaterEqual(
-                position,
-                0,
-                f"Position should be non-negative, got {position}"
-            )
+            for haplo_key in haplotype_keys:
+                position = edge_data[haplo_key]
+                
+                # Should be an integer position
+                self.assertIsInstance(
+                    position,
+                    int,
+                    f"haplotype position for {haplo_key} should be an int, got {type(position)}"
+                )
+                self.assertGreaterEqual(
+                    position,
+                    0,
+                    f"haplotype position for {haplo_key} should be >= 0, got {position}"
+                )
     
     def test_complementary_edges_have_same_position(self):
-        """Test that complementary edges have the same primary_edge_pos"""
+        """Test that complementary edges have the same haplotype position data"""
         from graph_var.utils import edge_complement
         
         for (u, v), edge_data in self.G.edges.items():
-            primary_edge_pos = edge_data.get('primary_edge_pos')
+            # Check for haplotype keys
+            haplotype_keys = [key for key in edge_data.keys() if key in ['ref', 'sample1_1', 'sample1_2', 'sample2_1', 'sample2_2']]
             
-            if primary_edge_pos is None:
+            if not haplotype_keys:
                 continue
             
             # Get the complementary edge
@@ -135,41 +122,44 @@ class TestHaplotypePositions(unittest.TestCase):
                 continue
             
             comp_edge_data = self.G.edges[comp_edge]
-            comp_primary_edge_pos = comp_edge_data.get('primary_edge_pos')
             
-            self.assertEqual(
-                primary_edge_pos,
-                comp_primary_edge_pos,
-                f"Edge ({u}, {v}) has primary_edge_pos={primary_edge_pos}, "
-                f"but its complement {comp_edge} has {comp_primary_edge_pos}"
-            )
+            # Check that both edges have the same haplotype keys and positions
+            for haplo_key in haplotype_keys:
+                self.assertIn(
+                    haplo_key,
+                    comp_edge_data,
+                    f"Complementary edge {comp_edge} missing haplotype key {haplo_key}"
+                )
+                self.assertEqual(
+                    edge_data[haplo_key],
+                    comp_edge_data[haplo_key],
+                    f"Complementary edges should have same position for {haplo_key}"
+                )
     
-    def test_priority_dict_affects_position_assignment(self):
-        """Test that priority_dict correctly prioritizes haplotypes"""
-        # Create a minimal graph to test priority
+    def test_haplotype_positions_are_assigned(self):
+        """Test that haplotype positions are assigned to edges"""
+        # Create a minimal graph to test position assignment
         test_dir = os.path.dirname(__file__)
         gfa_file = os.path.join(test_dir, "data", "simple_nested.gfa")
         
-        # Load with different priority
-        priority_dict = {'ref': 0, 'sample1': 1, 'sample2': 2}
-        G_with_priority = PangenomeGraph.from_gfa_line_by_line(
+        # Load the graph
+        G = PangenomeGraph.from_gfa_line_by_line(
             gfa_file,
-            ref_name='ref',
-            priority_dict=priority_dict
+            ref_name='ref'
         )
         
-        # Check that reference positions are preserved
-        ref_edge_count = 0
-        for (u, v), edge_data in G_with_priority.edges.items():
-            primary_edge_pos = edge_data.get('primary_edge_pos')
-            if primary_edge_pos and primary_edge_pos[0] == 'ref':
-                ref_edge_count += 1
+        # Check that edges have haplotype position data
+        edges_with_positions = 0
+        for (u, v), edge_data in G.edges.items():
+            haplotype_keys = [key for key in edge_data.keys() if key in ['ref', 'sample1_1', 'sample1_2', 'sample2_1', 'sample2_2']]
+            if haplotype_keys:
+                edges_with_positions += 1
         
-        # Should have some edges with reference as primary
+        # Should have some edges with haplotype positions
         self.assertGreater(
-            ref_edge_count,
+            edges_with_positions,
             0,
-            "Should have at least some edges with reference as primary haplotype"
+            "Should have at least some edges with haplotype position data"
         )
     
     def test_position_increases_along_walk(self):
@@ -190,9 +180,8 @@ class TestHaplotypePositions(unittest.TestCase):
             for u, v in zip(walk[:-1], walk[1:]):
                 if (u, v) in self.G.edges:
                     edge_data = self.G.edges[u, v]
-                    primary_edge_pos = edge_data.get('primary_edge_pos')
-                    if primary_edge_pos and primary_edge_pos[0] == hap_name:
-                        positions.append(primary_edge_pos[1])
+                    if hap_name in edge_data:
+                        positions.append(edge_data[hap_name])
             
             # Positions should be monotonically increasing
             if len(positions) > 1:
@@ -255,7 +244,7 @@ class TestHaplotypePositionsC4A(unittest.TestCase):
         )
     
     def test_reference_path_edges_have_positions(self):
-        """Test that all non-terminal edges in the reference path have primary_edge_pos"""
+        """Test that all non-terminal edges in the reference path have haplotype position data"""
         ref_path = self.G.reference_path
         edges_without_pos = []
         
@@ -270,7 +259,9 @@ class TestHaplotypePositionsC4A(unittest.TestCase):
                 continue
             
             edge_data = self.G.edges[u, v]
-            if 'primary_edge_pos' not in edge_data:
+            # Check for any haplotype position data (exclude standard graph attributes)
+            haplotype_keys = [key for key in edge_data.keys() if key not in ['weight', 'direction', 'sequence', 'position', 'branch_point', 'index', 'is_back_edge', 'is_in_tree', 'is_representative']]
+            if not haplotype_keys:
                 edges_without_pos.append((u, v))
         
         self.assertEqual(

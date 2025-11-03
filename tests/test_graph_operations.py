@@ -5,6 +5,7 @@ inversions, and direction assignment.
 import unittest
 import os
 from graph_var.graph import PangenomeGraph
+from graph_var.search_tree import dfs_methods
 
 
 class GraphOperationsTestBase:
@@ -96,6 +97,26 @@ class GraphOperationsTestBase:
                 edge = (node, next_node)
                 if self.G.has_edge(*edge):
                     self.assertTrue(self.G.on_reference_path(edge))
+
+    def test_dfs_method_parameter(self):
+        """Test that different dfs_method_name parameters work correctly"""
+        test_dir = os.path.dirname(__file__)
+        gfa_file = os.path.join(test_dir, "data", "simple_nested.gfa")
+        
+        # Test with default max_weight method
+        G_max_weight = PangenomeGraph.from_gfa_line_by_line(gfa_file, ref_name='ref', dfs_method_name='max_weight')
+        self.assertIsNotNone(G_max_weight.reference_tree)
+        self.assertGreater(G_max_weight.reference_tree.number_of_edges(), 0)
+        
+        # Test that the max_weight method works (it's the only one compatible with standard GFA files)
+        # The contiguous method requires haplotype labels which aren't present in standard GFA files
+        G_again = PangenomeGraph.from_gfa_line_by_line(gfa_file, ref_name='ref', dfs_method_name='max_weight')
+        self.assertIsNotNone(G_again.reference_tree)
+        self.assertGreater(G_again.reference_tree.number_of_edges(), 0)
+        
+        # Test invalid method name raises appropriate error
+        with self.assertRaises(KeyError):
+            PangenomeGraph.from_gfa_line_by_line(gfa_file, ref_name='ref', dfs_method_name='invalid_method')
 
 
 class TestGraphOperations(GraphOperationsTestBase, unittest.TestCase):

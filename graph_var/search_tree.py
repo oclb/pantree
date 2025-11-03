@@ -1,8 +1,14 @@
 import networkx as nx
 from .utils import node_complement
+import operator
+
+# TODO de-duplicate logic between DFS functions
+# TODO add edge-weight priority as tiebreaker 
+# TODO turn haplo_labels list into dict with value = priority, allowing ties
+# 
 
 def max_weight_dfs_tree(G: nx.DiGraph,
-                        reference_path: list) -> nx.DiGraph:
+                        reference_path: list, **kwargs) -> nx.DiGraph:
     """
     Perform a depth-first search (DFS) prioritizing higher weight edges and return a DFS tree.
     :param G: A NetworkX directed graph
@@ -42,7 +48,7 @@ def max_weight_dfs_tree(G: nx.DiGraph,
     return dfs_tree
 
 def assign_node_directions(G: nx.DiGraph,
-                        reference_path: list) -> None:
+                        reference_path: list, **kwargs) -> None:
     """
     Perform a depth-first search (DFS) prioritizing higher weight edges and return a DFS tree.
 
@@ -97,3 +103,76 @@ def assign_node_directions(G: nx.DiGraph,
         visit_node(None, unvisited_node, 1)
 
 
+def haplo_contiguous_dfs_tree(G: nx.DiGraph,
+                        haplo_labels: list[str],    
+                        reference_path: list,
+                        haplo_priorities: dict = None) -> nx.DiGraph:
+    
+    # If haplo_priorities is provided, use it to sort haplo_labels
+    if haplo_priorities is not None:
+        haplo_labels = [label for label, _ in sorted(haplo_priorities.items(), key=operator.itemgetter(1))]
+    def get_neighbors(G: nx.DiGraph, node: str, haplo_label: str) -> list:
+        priority = {}
+        for neighbor in G.successors(node):
+            label = haplo_label
+            hap_idx = 0
+            # Check if edge belongs to current haplotype by looking for the haplotype name as a key
+            while hap_idx < len(haplo_labels) and haplo_labels[hap_idx] not in G.edges[(node, neighbor)]:
+                hap_idx += 1
+            assert hap_idx < len(haplo_labels), f'No haplotype found for edge {node} -> {neighbor}'
+            label = haplo_labels[hap_idx]
+            priority[neighbor] = hap_idx
+            
+        neighbors = sorted(priority.keys(), key=lambda x: priority[x], reverse=True)
+        return neighbors
+
+    def visit_node(parent, current_node, haplo_label):
+        if current_node in visited:
+            return
+            
+        # visit current_node
+        visited.add(current_node)
+        # Add the node to the tree even if it has no parent
+        if current_node not in dfs_tree:
+            dfs_tree.add_node(current_node)
+        
+        if parent is not None:
+            assert G.has_edge(parent, current_node)
+            dfs_tree.add_edge(parent, current_node)
+            hap_idx = 0
+            # Check if edge belongs to current haplotype by looking for the haplotype name as a key
+            while hap_idx < len(haplo_labels) and haplo_labels[hap_idx] not in G.edges[(parent, current_node)]:
+                hap_idx += 1
+            assert hap_idx < len(haplo_labels), f'No haplotype found for edge {parent} -> {current_node}'
+            haplo_label = haplo_labels[hap_idx]
+
+        # Sort neighbors by descending edge weight
+        neighbors = get_neighbors(G, current_node, haplo_label)
+
+        # Last-added edges will be visited first
+        for neighbor in neighbors:
+            if neighbor not in visited:
+                stack.append((current_node, neighbor, haplo_label))
+
+        
+    dfs_tree = nx.DiGraph()
+    visited = set()
+    stack = []
+
+    for i in range(len(reference_path)):
+        if i == 0:
+            reference_edge = (None, reference_path[0])
+        else:
+            reference_edge = (reference_path[i - 1], reference_path[i])
+        visit_node(*reference_edge, haplo_labels[0])
+
+    while stack:
+        tup = stack.pop()
+        visit_node(*tup)
+
+    return dfs_tree
+
+
+# Dictionary of available DFS methods, defined after all functions
+dfs_methods: dict = {'max_weight': max_weight_dfs_tree,
+                     'contiguous': haplo_contiguous_dfs_tree}
