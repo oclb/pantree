@@ -116,10 +116,10 @@ def haplo_contiguous_dfs_tree(G: nx.DiGraph,
             label = haplo_label
             hap_idx = 0
             # Check if edge belongs to current haplotype by looking for the haplotype name as a key
-            while hap_idx < len(haplo_labels) and haplo_labels[hap_idx] not in G.edges[(node, neighbor)]:
+            while hap_idx < len(haplo_labels) and label not in G.edges[(node, neighbor)]:
+                label = haplo_labels[hap_idx]
                 hap_idx += 1
             assert hap_idx < len(haplo_labels), f'No haplotype found for edge {node} -> {neighbor}'
-            label = haplo_labels[hap_idx]
             priority[neighbor] = hap_idx
             
         neighbors = sorted(priority.keys(), key=lambda x: priority[x], reverse=True)
