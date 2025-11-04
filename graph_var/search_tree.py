@@ -104,13 +104,12 @@ def assign_node_directions(G: nx.DiGraph,
 
 
 def haplo_contiguous_dfs_tree(G: nx.DiGraph,
-                        haplo_labels: list[str],    
-                        reference_path: list,
-                        haplo_priorities: dict = None) -> nx.DiGraph:
+                        haplo_priorities: dict[str, int],    
+                        reference_path: list) -> nx.DiGraph:
     
-    # If haplo_priorities is provided, use it to sort haplo_labels
-    if haplo_priorities is not None:
-        haplo_labels = [label for label, _ in sorted(haplo_priorities.items(), key=operator.itemgetter(1))]
+    # Sort haplotype labels by priority (lower priority value = higher precedence)
+    # Ties are allowed (same priority value)
+    haplo_labels = sorted(haplo_priorities.keys(), key=lambda x: haplo_priorities[x])
     def get_neighbors(G: nx.DiGraph, node: str, haplo_label: str) -> list:
         priority = {}
         for neighbor in G.successors(node):

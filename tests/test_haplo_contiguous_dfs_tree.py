@@ -14,8 +14,8 @@ def test_haplo_contiguous_dfs_tree():
     for node in nodes:
         G.add_node(node)
     
-    # Define haplotype labels
-    haplo_labels = ['haplo1', 'haplo2', 'other']
+    # Define haplotype priorities (lower value = higher priority)
+    haplo_priorities = {'haplo1': 0, 'haplo2': 1, 'other': 2}
     
     # Create paths and label edges
     # Path 1: start -> A -> C -> F (haplo1)
@@ -49,7 +49,7 @@ def test_haplo_contiguous_dfs_tree():
     
     # Call the function
     reference_path = ['start']
-    result_tree = haplo_contiguous_dfs_tree(G, haplo_labels, reference_path)
+    result_tree = haplo_contiguous_dfs_tree(G, haplo_priorities, reference_path)
     
     # Basic assertions
     assert isinstance(result_tree, nx.DiGraph), "Result should be a DiGraph"
@@ -92,7 +92,7 @@ def test_haplo_prioritization():
     for node in nodes:
         G.add_node(node)
     
-    haplo_labels = ['haplo1', 'haplo2', 'other']
+    haplo_priorities = {'haplo1': 0, 'haplo2': 1, 'other': 2}
     
     # Create edges with different haplotype priorities
     edges = [('start', 'A'), ('start', 'B'), ('A', 'C'), ('B', 'C')]
@@ -105,7 +105,7 @@ def test_haplo_prioritization():
     G.edges[('A', 'C')]['haplo1'] = 300
     G.edges[('B', 'C')]['haplo2'] = 400
     
-    result_tree = haplo_contiguous_dfs_tree(G, haplo_labels, ['start'])
+    result_tree = haplo_contiguous_dfs_tree(G, haplo_priorities, ['start'])
     
     # Verify tree properties: each node besides 'start' has exactly 1 parent
     for node in result_tree.nodes():
@@ -128,9 +128,9 @@ def test_empty_graph():
     """
     G = nx.DiGraph()
     G.add_node('start')
-    haplo_labels = ['haplo1', 'other']
+    haplo_priorities = {'haplo1': 0, 'other': 1}
     
-    result_tree = haplo_contiguous_dfs_tree(G, haplo_labels, ['start'])
+    result_tree = haplo_contiguous_dfs_tree(G, haplo_priorities, ['start'])
     
     assert 'start' in result_tree.nodes(), "Should include start node even in empty graph"
     assert result_tree.number_of_edges() == 0, "Should have no edges in empty graph"
@@ -145,7 +145,7 @@ def test_overlapping_haplotypes():
     for node in nodes:
         G.add_node(node)
     
-    haplo_labels = ['haplo1', 'haplo2', 'other']
+    haplo_priorities = {'haplo1': 0, 'haplo2': 1, 'other': 2}
     
     # Create a more complex graph with overlapping haplotypes
     edges = [
@@ -177,7 +177,7 @@ def test_overlapping_haplotypes():
     # Label remaining edges as 'other'
     G.edges[('start', 'F')]['other'] = 700
     
-    result_tree = haplo_contiguous_dfs_tree(G, haplo_labels, ['start'])
+    result_tree = haplo_contiguous_dfs_tree(G, haplo_priorities, ['start'])
     
     # Verify tree properties: each node besides 'start' has exactly 1 parent
     for node in result_tree.nodes():
@@ -231,7 +231,7 @@ def test_dfs_methods_integration():
     G_cont.add_edge('start', 'end')
     G_cont.edges[('start', 'end')]['haplo1'] = 100  # Position value instead of binary
     
-    tree_cont = dfs_methods['contiguous'](G_cont, ['haplo1', 'haplo2', 'other'], ['start'])
+    tree_cont = dfs_methods['contiguous'](G_cont, {'haplo1': 0, 'haplo2': 1, 'other': 2}, ['start'])
     assert isinstance(tree_cont, nx.DiGraph)
     assert list(tree_cont.edges()) == [('start', 'end')]
     
@@ -265,22 +265,18 @@ def test_haplo_priorities_functionality():
     G.edges[('start', 'B')]['haplo2'] = 300
     G.edges[('B', 'C')]['haplo2'] = 400
     
-    # Test with haplo_priorities dict
-    haplo_priorities = {'haplo2': 2, 'haplo1': 1, 'other': 3}
-    result_tree = haplo_contiguous_dfs_tree(G, ['haplo1', 'haplo2', 'other'], ['start'], haplo_priorities=haplo_priorities)
+    # Test with haplo_priorities dict (haplo1 has highest priority)
+    haplo_priorities = {'haplo1': 0, 'haplo2': 1, 'other': 2}
+    result_tree = haplo_contiguous_dfs_tree(G, haplo_priorities, ['start'])
     
     # Should prioritize haplo1 path (start->A->C) due to higher priority (lower number)
     assert ('start', 'A') in result_tree.edges(), "Should prioritize haplo1 path due to higher priority"
     assert ('A', 'C') in result_tree.edges(), "Should include haplo1 continuation"
     
-    # Test with different priority ordering
-    haplo_priorities_swapped = {'haplo1': 2, 'haplo2': 1, 'other': 3}
-    result_tree_swapped = haplo_contiguous_dfs_tree(G, ['haplo1', 'haplo2', 'other'], ['start'], haplo_priorities=haplo_priorities_swapped)
+    # Test with different priority ordering (haplo2 has highest priority)
+    haplo_priorities_swapped = {'haplo1': 1, 'haplo2': 0, 'other': 2}
+    result_tree_swapped = haplo_contiguous_dfs_tree(G, haplo_priorities_swapped, ['start'])
     
     # Should prioritize haplo2 path (start->B->C) due to higher priority (lower number)
     assert ('start', 'B') in result_tree_swapped.edges(), "Should prioritize haplo2 path due to higher priority"
     assert ('B', 'C') in result_tree_swapped.edges(), "Should include haplo2 continuation"
-    
-    # Test backward compatibility (without haplo_priorities)
-    result_tree_old = haplo_contiguous_dfs_tree(G, ['haplo1', 'haplo2', 'other'], ['start'])
-    assert isinstance(result_tree_old, nx.DiGraph), "Should work without haplo_priorities parameter"

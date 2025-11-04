@@ -439,6 +439,7 @@ class PangenomeGraph(nx.DiGraph):
         meta_info += f'##INFO=<ID=AC,Number=A,Type=Integer,Description="The ALT allele count">\n'
         meta_info += f'##INFO=<ID=AN,Number=1,Type=Integer,Description="Total number of alleles in called genotypes">\n'
         meta_info += f'##INFO=<ID=PV,Number=2,Type=Integer,Description="Position of variant edge\'s two nodes">\n'
+        meta_info += f'##INFO=<ID=HP,Number=.,Type=String,Description="Haplotype positions at reference tree edge (haplotype:position)">\n'
         meta_info += f'##INFO=<ID=TR_MOTIF,Number=1,Type=String,Description="Tandem repeat motif">\n'
         meta_info += f'##INFO=<ID=NIA,Number=1,Type=Integer,Description="Nearly identical alleles (1=yes, 0=no)">\n'
         meta_info += f'##contig=<ID={chr_name}>\n'
@@ -586,6 +587,14 @@ class PangenomeGraph(nx.DiGraph):
 
                 AN = RC + AC if not self.is_inversion(edge) else '.'
 
+                # Get haplotype positions for this variant edge
+                hap_positions = self.haplotype_position(edge)
+                # Format haplotype positions as "hap1:pos1,hap2:pos2,..." or "." if empty/root
+                if hap_positions == {'.': '.'}:
+                    hp_str = '.'
+                else:
+                    hp_str = ','.join([f'{hap}:{pos}' for hap, pos in sorted(hap_positions.items())])
+                
                 INFO = (f'NR={new_ref if new_ref else "."};'
                         f'VT={VT};'
                         f'DR={int(self.nodes[u]["distance_from_reference"])},{int(self.nodes[v]["distance_from_reference"])};'
@@ -593,6 +602,7 @@ class PangenomeGraph(nx.DiGraph):
                         f'AC={AC};'
                         f'AN={AN};'
                         f'PV={int(self.nodes[u]["position"])},{int(self.nodes[v]["position"])};'
+                        f'HP={hp_str};'
                         f'TR_MOTIF={motif}')
 
                 if nearly_identical_alleles(ref_allele, alt_allele):
@@ -859,10 +869,53 @@ class PangenomeGraph(nx.DiGraph):
                 raise ValueError(f'Node {u} has no sequence')
             offset += len(seq_u)
 
-            edges = (self.edges[u, v], self.edges[*edge_complement((u, v))])
+            complement_edge = edge_complement((u, v))
+            edges = (self.edges[u, v], self.edges[complement_edge])
             for ed in edges:
                 ed[hap_name] = offset
 
+    def haplotype_position(self, edge: tuple[str, str]) -> dict[str, int]:
+        """
+        For a given edge (u, v), returns the haplotype position information from the 
+        reference tree edge (a, b), where:
+        - b is the branchpoint (lowest common ancestor) of the positive copies of u and v
+        - a is the predecessor of b in the reference tree
+        
+        :param edge: A tuple (u, v) representing an edge in the graph
+        :return: Dictionary mapping haplotype names to their position offsets at edge (a, b)
+        """
+        u, v = edge
+        
+        # Get the branchpoint (b) - the lowest common ancestor of positive copies of u and v
+        if 'branch_point' not in self.edges[edge]:
+            raise ValueError(f"Edge {edge} does not have a branch_point. Run annotate_branch_points() first.")
+        
+        b = self.edges[edge]['branch_point']
+        
+        # Get the predecessor (a) of b in the reference tree
+        a = self.parent_in_tree(b)
+        
+        # If branch point has no predecessor (it's the root), return '.' for all positions
+        if a is None:
+            return {'.': '.'}
+        
+        # Get the haplotype position information from edge (a, b)
+        if not self.has_edge(a, b):
+            raise ValueError(f"Edge ({a}, {b}) does not exist in the graph.")
+        
+        edge_data = self.edges[a, b]
+        
+        # Extract all haplotype position information (keys that are haplotype names with their offsets)
+        # Filter out non-haplotype attributes like 'weight', 'is_in_tree', etc.
+        haplotype_positions = {}
+        excluded_keys = {'weight', 'is_in_tree', 'branch_point', 'is_back_edge', 'is_representative', 
+                        'index', 'is_inversion'}
+        
+        for key, value in edge_data.items():
+            if key not in excluded_keys and isinstance(value, (int, float)):
+                haplotype_positions[key] = value
+        
+        return haplotype_positions
 
     def compute_edge_weights(self, walks: list[list[str]]):
         """
