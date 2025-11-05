@@ -119,11 +119,8 @@ class GFAWalkLine:
     walk: list[str]
 
     @staticmethod
-    def _get_hap_name(sample_name: str, hap_index: int) -> str:
-        if int(hap_index) == 0:
-            return sample_name
-        
-        return sample_name + '_' + str(hap_index)
+    def _get_hap_name(parts: list[str]) -> str:
+        return '#'.join(parts[1:4])
 
     @classmethod
     def from_parts_P(cls, parts: list[str]):
@@ -134,7 +131,7 @@ class GFAWalkLine:
 
     @classmethod
     def from_parts_W(cls, parts: list[str]):
-        hap_name = cls._get_hap_name(parts[1], parts[2])
+        hap_name = cls._get_hap_name(parts)
         contig_start = int(parts[4]) if parts[4] != '*' else 0
         walk = cls._parse_W_walk(parts[6])
         return cls(hap_name, contig_start, walk)
