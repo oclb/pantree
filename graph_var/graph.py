@@ -23,6 +23,7 @@ import time
 from collections import defaultdict
 from tqdm import tqdm
 from typing import Any, Optional, Callable
+import warnings
 
 class PangenomeGraph(nx.DiGraph):
     reference_tree: nx.classes.digraph.DiGraph
@@ -55,11 +56,7 @@ class PangenomeGraph(nx.DiGraph):
             sorted_vars = [edge for edge in self.variant_edges if not self.is_terminal(edge)]
         else:
             sorted_vars = self.variant_edges
-        sorted_vars = sorted(sorted_vars, key=lambda x:
-                      (self.get_vcf_position(x),
-                       int(self.nodes[self.positive_variant_edge(x)[0]]["distance_from_reference"]),
-                       int(self.nodes[self.positive_variant_edge(x)[1]]["distance_from_reference"]),
-                       self.positive_variant_edge(x)[0], self.positive_variant_edge(x)[1]))
+        sorted_vars = sorted(sorted_vars, key=lambda x: self.position(self.edges[x]['branch_point']))
         return sorted_vars
 
     @property
@@ -133,41 +130,43 @@ class PangenomeGraph(nx.DiGraph):
         # Default priority dictionary with 4 priority haplotypes + 'other'
         if priority_dict is None:
             priority_dict = {
-                'GRCh38#0': 0,
-                'CHM13#0': 1,
-                'HG002#1': 2,
-                'HG002#2': 2,
+                'GRCh38': 0,
+                'CHM13': 1,
+                'HG002': 2,
                 'other': 999
             }
 
         G = cls()
-        G.haplo_priorities = priority_dict
+        G.haplo_priorities = {}
 
         gfa_basename = os.path.basename(gfa_file)
         walk_start_nodes = []
         walk_end_nodes = []
 
-        print("Reading gfa file - first pass: nodes and edges")
-        walks = []
-        for line in read_gfa_line_by_line(gfa_file):
-            if type(line) is GFANodeLine:
-                G.add_binode(line.node_id, line.sequence)
-            if type(line) is GFAEdgeLine:
-                G.add_biedge(line.u, line.v)
+        print("Reading gfa file - first pass: nodes")
+        for line in read_gfa_line_by_line(gfa_file, line_types=['S']):
+            G.add_binode(line.node_id, line.sequence)
 
-        print("Reading gfa file - second pass: walks")
-        for line in read_gfa_line_by_line(gfa_file):
-            if type(line) is not GFAWalkLine:
-                continue
+        print("Reading gfa file - second pass: edges")
+        for line in read_gfa_line_by_line(gfa_file, line_types=['L']):
+            G.add_biedge(line.u, line.v)
+
+        print("Reading gfa file - third pass: walks")
+        walks = []
+        for line in read_gfa_line_by_line(gfa_file, line_types=['W', 'P']):
             print(line.hap_name)
             # Check if haplotype name starts with ref_name (e.g., 'GRCh38#0#chr20' starts with 'GRCh38')
-            hit_reference = line.hap_name.startswith(ref_name + '#') or line.hap_name == ref_name
+            hit_reference = line.sample_name == ref_name
             if hit_reference:
-                if G.reference_path and len(G.reference_path) > 2:  # Already has reference path (more than just termini)
-                    continue  # Skip additional reference walks
-                G.add_reference_path(line.walk)
+                if G.reference_path is not None:
+                    warnings.warn("Reference path already exists. Skipping additional reference walks.")
+                else:
+                    G.add_reference_path(line.walk)
             
-            G.update_haplotype_positions(line)
+            # Extract sample#haplotype from hap_name (format: sample#haplotype#contig)
+            if line.sample_name in priority_dict:
+                G.haplo_priorities[line.hap_name] = priority_dict[line.sample_name]
+                G.update_haplotype_positions(line)
                 
             if return_walks:
                 walks.append(line.walk)
@@ -176,11 +175,6 @@ class PangenomeGraph(nx.DiGraph):
             walk_end_nodes.append(line.walk[-1])
             
             G.compute_edge_weights([line.walk])
-
-        # Add 'other' to priority dict with lowest priority for haplo_contiguous_dfs_tree
-        max_priority = max(priority_dict.values()) if priority_dict else 0
-        priority_dict['other'] = max_priority + 1
-        G.haplo_priorities = priority_dict
 
         if log_path:
             log_action(log_path, f"Reading gfa file: {gfa_basename}")
@@ -474,29 +468,26 @@ class PangenomeGraph(nx.DiGraph):
         # Supports both W-lines (GFA1.1) and P-lines (GFA1.0)
         if gfa_path:
             print("Computing genotype for haplotypes")
-            pre_sample_name = None
-            for line in read_gfa_line_by_line(gfa_path):
-                if type(line) is not GFAWalkLine:
-                    continue
+            prev_sample_name = None
+            for line in read_gfa_line_by_line(gfa_path, line_types=['W', 'P']):
                 walk = line.walk
                 haplotype_name = line.hap_name
-                sample_name = line.hap_name  # Use full haplotype name as sample name (old working behavior)
-                if pre_sample_name is not None and sample_name != pre_sample_name:
-                    # print("Sample:", pre_sample_name, sample_name)
-                    # print_current_memory_usage()
-                    assert sample_name not in sample_vcf_info_dict
-                    sample_missing_dict = {hap: set(self.get_missing_variants(lc, exclude_terminus)) for hap, lc in
-                                           sample_lc_dict.items()}
-                    sample_info_list = self.get_sample_vcf_info(pre_sample_name,
-                                                                sample_cr_dict,
-                                                                sample_ca_dict,
-                                                                sample_missing_dict,
-                                                                exclude_terminus=exclude_terminus)
-                    sample_vcf_info_dict[pre_sample_name] = sample_info_list
+                sample_name = line.sample_name  # Use full haplotype name as sample name (old working behavior)
+                if sample_name != prev_sample_name:
+                    if prev_sample_name is not None:
+                        assert prev_sample_name not in sample_vcf_info_dict
+                        sample_missing_dict = {hap: set(self.get_missing_variants(lc, exclude_terminus)) for hap, lc in
+                                               sample_lc_dict.items()}
+                        sample_info_list = self.get_sample_vcf_info(prev_sample_name,
+                                                                    sample_cr_dict,
+                                                                    sample_ca_dict,
+                                                                    sample_missing_dict,
+                                                                    exclude_terminus=exclude_terminus)
+                        sample_vcf_info_dict[prev_sample_name] = sample_info_list
 
-                    sample_cr_dict.clear()
-                    sample_ca_dict.clear()
-                    sample_lc_dict.clear()
+                        sample_cr_dict.clear()
+                        sample_ca_dict.clear()
+                        sample_lc_dict.clear()
 
                 cr_dict, ca_dict, linear_coverage = self.genotype(walk, return_linear_coverage=True)
 
@@ -505,7 +496,7 @@ class PangenomeGraph(nx.DiGraph):
 
                 sample_lc_dict[haplotype_name].append(linear_coverage)
 
-                pre_sample_name = sample_name
+                prev_sample_name = sample_name
 
             sample_missing_dict = {hap: set(self.get_missing_variants(lc, exclude_terminus)) for hap, lc in
                                 sample_lc_dict.items()}
@@ -605,12 +596,11 @@ class PangenomeGraph(nx.DiGraph):
                 AN = RC + AC if not self.is_inversion(edge) else '.'
 
                 # Get haplotype positions for this variant edge
-                hap_positions = self.haplotype_position(edge)
+                hap_positions = {hap_name: self.get_vcf_position(edge, prepend_letter_to_alleles, hap_name)
+                                for hap_name in self.haplo_priorities.keys()}
+                                
                 # Format haplotype positions as "hap1:pos1,hap2:pos2,..." or "." if empty/root
-                if hap_positions == {'.': '.'}:
-                    hp_str = '.'
-                else:
-                    hp_str = ','.join([f'{hap}:{pos}' for hap, pos in sorted(hap_positions.items())])
+                hp_str = ','.join([f'{hap}:{pos}' for hap, pos in sorted(hap_positions.items()) if pos is not None])
                 
                 INFO = (f'NR={new_ref if new_ref else "."};'
                         f'VT={VT};'
@@ -641,6 +631,17 @@ class PangenomeGraph(nx.DiGraph):
                             exclude_terminus=True
                             ):
         sample_vcf_info = []
+        
+        # Get the actual haplotype names for this sample from the dictionaries
+        # Haplotype names are in format: sample#haplotype#contig (e.g., 'CHM13#0#CHM13#0#chr6')
+        haplotype_names = [h for h in sample_cr_dict.keys() if h.startswith(sample_name + '#')]
+        
+        # Debug: print what we found
+        if len(haplotype_names) == 0:
+            print(f"WARNING: No haplotypes found for sample {sample_name}")
+            print(f"  sample_cr_dict keys: {list(sample_cr_dict.keys())[:3]}")
+            print(f"  sample_missing_dict keys: {list(sample_missing_dict.keys())[:3]}")
+        
         for u, v in self.sorted_variant_edges(exclude_terminus=exclude_terminus):
             representative_variant_edge = (u, v)
             representative_ref_edge = self.representative_edge(self.reference_tree_edge(representative_variant_edge))
@@ -649,24 +650,23 @@ class PangenomeGraph(nx.DiGraph):
                 u, v = edge_complement((u, v))
             edge = (u, v)
 
-            # Check if sample_name exists directly in dictionaries (new format with full haplotype names)
-            # Otherwise fall back to old format with _1/_2 suffixes
-            if sample_name in sample_cr_dict:
-                # New format: use sample_name directly as haplotype name
-                haplotype_name = sample_name
-                cr = sample_cr_dict[haplotype_name].get(representative_ref_edge, 0) if not self.is_inversion(edge) else '.'
-                ca = sample_ca_dict[haplotype_name].get(representative_variant_edge, 0)
+            if len(haplotype_names) == 1:
+                # Haploid sample (e.g., CHM13, GRCh38)
+                haplotype_name = haplotype_names[0]
+                cr_0 = sample_cr_dict[haplotype_name].get(representative_ref_edge, 0) if not self.is_inversion(edge) else '.'
+                ca_0 = sample_ca_dict[haplotype_name].get(representative_variant_edge, 0)
 
                 count = ['.', '.', '.']
-                if haplotype_name in sample_missing_dict and representative_variant_edge not in sample_missing_dict[haplotype_name]:
-                    count[0] = int(bool(ca)) if cr != 0 or ca != 0 else '.'
-                    count[1] = cr
-                    count[2] = ca
+                if haplotype_name in sample_missing_dict and representative_variant_edge in sample_missing_dict[haplotype_name]:
+                    count[0] = int(bool(ca_0)) if cr_0 != 0 or ca_0 != 0 else '.'
+                    count[1] = cr_0
+                    count[2] = ca_0
                 counts = f"{count[0]}:{count[1]}:{count[2]}"
             else:
-                # Old format: diploid samples with _1 and _2 suffixes
-                haplotype1_name = sample_name + '_1'
-                haplotype2_name = sample_name + '_2'
+                # Diploid sample - sort to ensure consistent ordering (haplotype 1 then 2)
+                haplotype_names_sorted = sorted(haplotype_names)
+                haplotype1_name = haplotype_names_sorted[0]
+                haplotype2_name = haplotype_names_sorted[1]
 
                 cr_1 = sample_cr_dict[haplotype1_name].get(representative_ref_edge, 0) if not self.is_inversion(edge) else '.'
                 ca_1 = sample_ca_dict[haplotype1_name].get(representative_variant_edge, 0)
@@ -675,19 +675,20 @@ class PangenomeGraph(nx.DiGraph):
                 ca_2 = sample_ca_dict[haplotype2_name].get(representative_variant_edge, 0)
 
                 count_1 = ['.', '.', '.']
-                if haplotype1_name in sample_missing_dict and representative_variant_edge not in sample_missing_dict[haplotype1_name]:
+                if haplotype1_name in sample_missing_dict and representative_variant_edge in sample_missing_dict[haplotype1_name]:
                     count_1[0] = int(bool(ca_1)) if cr_1 != 0 or ca_1 != 0 else '.'
                     count_1[1] = cr_1
                     count_1[2] = ca_1
 
                 count_2 = ['.', '.', '.']
-                if haplotype2_name in sample_missing_dict and representative_variant_edge not in sample_missing_dict[haplotype2_name]:
+                if haplotype2_name in sample_missing_dict and representative_variant_edge in sample_missing_dict[haplotype2_name]:
                     count_2[0] = int(bool(ca_2)) if cr_2 != 0 or ca_2 != 0 else '.'
                     count_2[1] = cr_2
                     count_2[2] = ca_2
                 counts = f"{count_1[0]}|{count_2[0]}:{count_1[1]},{count_2[1]}:{count_1[2]},{count_2[2]}"
             sample_vcf_info.append(counts)
         return sample_vcf_info
+
 
     def write_tree(self, filename: str) -> list:
         """
@@ -882,96 +883,10 @@ class PangenomeGraph(nx.DiGraph):
         hap_name = line.hap_name
         offset = line.contig_start
 
-        for u, v in zip(walk[:-1], walk[1:]):
-            if (u, v) not in self.edges:
-                raise ValueError(f'Edge {u} -> {v} not found in graph')
-            seq_u: str = self.nodes[u].get("sequence")
-            if seq_u is None:
-                raise ValueError(f'Node {u} has no sequence')
-            offset += len(seq_u)
-
-            complement_edge = edge_complement((u, v))
-            edges = (self.edges[u, v], self.edges[complement_edge])
-            for ed in edges:
-                ed[hap_name] = offset
-
-    def haplotype_position(self, edge: tuple[str, str]) -> dict[str, int]:
-        """
-        For a given edge (u, v), returns the haplotype position information from the 
-        reference tree edge (a, b), where:
-        - b is the branchpoint (lowest common ancestor) of the positive copies of u and v
-        - a is the predecessor of b in the reference tree
-        
-        Only includes haplotypes that are in the haplo_priorities dictionary.
-        Aggregates multiple walks/contigs from the same haplotype.
-        
-        :param edge: A tuple (u, v) representing an edge in the graph
-        :return: Dictionary mapping haplotype names (from priority dict) to their position offsets at edge (a, b)
-        """
-        u, v = edge
-        
-        # Get the branchpoint (b) - the lowest common ancestor of positive copies of u and v
-        if 'branch_point' not in self.edges[edge]:
-            raise ValueError(f"Edge {edge} does not have a branch_point. Run annotate_branch_points() first.")
-        
-        b = self.edges[edge]['branch_point']
-        
-        # Get the predecessor (a) of b in the reference tree
-        a = self.parent_in_tree(b)
-        
-        # If branch point has no predecessor (it's the root), return '.' for all positions
-        if a is None:
-            return {'.': '.'}
-        
-        # Get the haplotype position information from edge (a, b)
-        if not self.has_edge(a, b):
-            raise ValueError(f"Edge ({a}, {b}) does not exist in the graph.")
-        
-        edge_data = self.edges[a, b]
-        
-        # Extract all haplotype position information (keys that are haplotype names with their offsets)
-        # Filter out non-haplotype attributes like 'weight', 'is_in_tree', etc.
-        excluded_keys = {'weight', 'is_in_tree', 'branch_point', 'is_back_edge', 'is_representative', 
-                        'index', 'is_inversion'}
-        
-        # Only include the 4 haplotypes in haplo_priorities dictionary
-        # All other haplotypes are considered "other" and get position "."
-        # Walk names are in format: sample#haplotype#contig (e.g., 'HG002#1#chr20')
-        # Priority dict keys are in format: sample#haplotype (e.g., 'GRCh38#0', 'CHM13#0', 'HG002#1', 'HG002#2')
-        
-        # Initialize result with "." for "other" haplotypes
-        result = {}
-        has_priority_haplo = False
-        
-        for key, value in edge_data.items():
-            if key not in excluded_keys and isinstance(value, (int, float)):
-                # Extract sample#haplotype from walk name (remove contig part)
-                # Walk format: sample#haplotype#contig (e.g., 'HG002#1#chr20')
-                # We want to extract: sample#haplotype (e.g., 'HG002#1')
-                
-                # Split by '#' and take first two parts
-                parts = key.split('#')
-                if len(parts) >= 2:
-                    # Reconstruct sample#haplotype
-                    haplo_key = f"{parts[0]}#{parts[1]}"
-                else:
-                    # If no '#', use the key as-is
-                    haplo_key = key
-                
-                # Check if this haplotype is in the priority dict (one of the 4)
-                if haplo_key in self.haplo_priorities:
-                    # Use the first position found for this haplotype (aggregate across contigs)
-                    if haplo_key not in result:
-                        # Add len(b) to the position value
-                        b_len = len(self.nodes[b]['sequence'])
-                        result[haplo_key] = value + b_len
-                        has_priority_haplo = True
-        
-        # If no priority haplotypes found on this edge, return "." for "other"
-        if not has_priority_haplo:
-            result['.'] = '.'
-        
-        return result
+        for u in walk:
+            offset += len(self.nodes[u]['sequence'])
+            self.nodes[u][hap_name] = offset
+            self.nodes[node_complement(u)][hap_name] = offset
 
     def compute_edge_weights(self, walks: list[list[str]]):
         """
@@ -1027,23 +942,17 @@ class PangenomeGraph(nx.DiGraph):
 
     def get_vcf_position(self,
                          edge: tuple,
-                         prepend_letter_to_alleles: bool = None,
-                         field_name: str = 'position') -> int:
+                         prepend_letter_to_alleles: bool,
+                         field_name: str = 'position') -> int | None:
         """The VCF position of a variant is offset by 1 compared with the ordinary position, except
         variants that by convention have the last letter of the branch point prepended to their ref 
         and their alt allele."""
-        edge = self.positive_variant_edge(edge)
-        u, v = edge
-
-        if prepend_letter_to_alleles is None:
-            ref_allele, alt_allele, last_letter_of_branch_point, branch_point = self.ref_alt_alleles(edge)
-            prepend_letter_to_alleles = (len(ref_allele) == 0 or len(alt_allele) == 0)
-
-            ref_allele_on_forward_reference_path = self.direction(edge[0]) == 1 and self.on_reference_path(edge)
-            if not ref_allele_on_forward_reference_path:
-                prepend_letter_to_alleles = False
-
-        return self.edges[edge][field_name] + 1 - int(prepend_letter_to_alleles)
+        branch_point = self.edges[edge]['branch_point']
+        assert branch_point is not None
+        branch_position = self.nodes[branch_point].get(field_name, None)
+        if branch_position is None:
+            return None
+        return branch_position + 1 - int(prepend_letter_to_alleles)
 
     def walk_sequence(self, walk: list[str]) -> str:
         seq = ''
