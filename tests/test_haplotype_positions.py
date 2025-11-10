@@ -73,8 +73,11 @@ class TestHaplotypePositions(unittest.TestCase):
             if 'terminus' in u or 'terminus' in v:
                 continue
             
-            # Check if edge has any haplotype position data (keys that match haplotype names)
-            haplotype_keys = [key for key in edge_data.keys() if key in ['ref', 'sample1_1', 'sample1_2', 'sample2_1', 'sample2_2']]
+            # Check if edge has any haplotype position data
+            # Haplotype keys are in format: sample#haplotype#contig (e.g., 'ref#0#0', 'sample1#1#0')
+            # Exclude known edge attributes
+            excluded_keys = {'weight', 'is_in_tree', 'branch_point', 'is_back_edge', 'is_representative', 'index', 'is_inversion'}
+            haplotype_keys = [key for key in edge_data.keys() if key not in excluded_keys and isinstance(edge_data[key], (int, float))]
             if not haplotype_keys:
                 edges_without_pos.append((u, v))
         
@@ -151,7 +154,9 @@ class TestHaplotypePositions(unittest.TestCase):
         # Check that edges have haplotype position data
         edges_with_positions = 0
         for (u, v), edge_data in G.edges.items():
-            haplotype_keys = [key for key in edge_data.keys() if key in ['ref', 'sample1_1', 'sample1_2', 'sample2_1', 'sample2_2']]
+            # Haplotype keys are in format: sample#haplotype#contig (e.g., 'ref#0#0', 'sample1#1#0')
+            excluded_keys = {'weight', 'is_in_tree', 'branch_point', 'is_back_edge', 'is_representative', 'index', 'is_inversion'}
+            haplotype_keys = [key for key in edge_data.keys() if key not in excluded_keys and isinstance(edge_data[key], (int, float))]
             if haplotype_keys:
                 edges_with_positions += 1
         

@@ -109,18 +109,35 @@ def haplo_contiguous_dfs_tree(G: nx.DiGraph,
     
     # Sort haplotype labels by priority (lower priority value = higher precedence)
     # Ties are allowed (same priority value)
-    haplo_labels = sorted(haplo_priorities.keys(), key=lambda x: haplo_priorities[x])
+    # Remove 'other' from haplo_labels since it's not a real haplotype
+    haplo_labels_with_other = sorted(haplo_priorities.keys(), key=lambda x: haplo_priorities[x])
+    haplo_labels = [h for h in haplo_labels_with_other if h != 'other']
+    
     def get_neighbors(G: nx.DiGraph, node: str, haplo_label: str) -> list:
         priority = {}
         for neighbor in G.successors(node):
-            label = haplo_label
-            hap_idx = 0
-            # Check if edge belongs to current haplotype by looking for the haplotype name as a key
-            while hap_idx < len(haplo_labels) and label not in G.edges[(node, neighbor)]:
-                label = haplo_labels[hap_idx]
-                hap_idx += 1
-            assert hap_idx < len(haplo_labels), f'No haplotype found for edge {node} -> {neighbor}'
-            priority[neighbor] = hap_idx
+            edge_data = G.edges[(node, neighbor)]
+            
+            # Check if edge has any of the priority haplotypes (excluding 'other')
+            found_label = None
+            
+            # First try to continue with current haplotype
+            if haplo_label != 'other' and haplo_label in edge_data:
+                found_label = haplo_label
+            else:
+                # Search for any priority haplotype on this edge
+                for label in haplo_labels:
+                    if label in edge_data:
+                        found_label = label
+                        break
+            
+            # Assign priority based on found label
+            if found_label:
+                priority[neighbor] = haplo_labels.index(found_label)
+            else:
+                # No priority haplotype found - this is an 'other' edge
+                # Assign lowest priority (after all priority haplotypes)
+                priority[neighbor] = len(haplo_labels)
             
         neighbors = sorted(priority.keys(), key=lambda x: priority[x], reverse=True)
         return neighbors
@@ -138,14 +155,21 @@ def haplo_contiguous_dfs_tree(G: nx.DiGraph,
         if parent is not None:
             assert G.has_edge(parent, current_node)
             dfs_tree.add_edge(parent, current_node)
-            hap_idx = 0
-            # Check if edge belongs to current haplotype by looking for the haplotype name as a key
-            while hap_idx < len(haplo_labels) and haplo_labels[hap_idx] not in G.edges[(parent, current_node)]:
-                hap_idx += 1
-            assert hap_idx < len(haplo_labels), f'No haplotype found for edge {parent} -> {current_node}'
-            haplo_label = haplo_labels[hap_idx]
+            
+            # Determine which haplotype label this edge belongs to
+            edge_data = G.edges[(parent, current_node)]
+            
+            # Check if edge has any priority haplotype
+            found_label = None
+            for label in haplo_labels:
+                if label in edge_data:
+                    found_label = label
+                    break
+            
+            # If found a priority haplotype, use it; otherwise use 'other'
+            haplo_label = found_label if found_label else 'other'
 
-        # Sort neighbors by descending edge weight
+        # Get neighbors sorted by priority
         neighbors = get_neighbors(G, current_node, haplo_label)
 
         # Last-added edges will be visited first

@@ -40,10 +40,11 @@ def test_haplotype_position():
     
     # Add haplotype position information to edge (A+, B+)
     # This simulates what update_haplotype_positions would do
-    G.edges['A+', 'B+']['grch38'] = 1000
-    G.edges['A+', 'B+']['chm13'] = 1050
-    G.edges['A+', 'B+']['hg002#1'] = 1100
-    G.edges['A+', 'B+']['hg002#2'] = 1100
+    # Using full format: sample#haplotype#contig as it appears in real GFA files
+    G.edges['A+', 'B+']['GRCh38#0#chr1'] = 1000
+    G.edges['A+', 'B+']['CHM13#0#chr1'] = 1050
+    G.edges['A+', 'B+']['HG002#1#chr1'] = 1100
+    G.edges['A+', 'B+']['HG002#2#chr1'] = 1100
     
     # Also add some non-haplotype attributes
     G.edges['A+', 'B+']['weight'] = 5
@@ -61,12 +62,12 @@ def test_haplotype_position():
     for hap_name, offset in sorted(result.items()):
         print(f"  {hap_name}: {offset}")
     
-    # Verify the results
+    # Verify the results - now using full haplotype label format
     expected = {
-        'grch38': 1000,
-        'chm13': 1050,
-        'hg002#1': 1100,
-        'hg002#2': 1100
+        'GRCh38#0#chr1': 1000,
+        'CHM13#0#chr1': 1050,
+        'HG002#1#chr1': 1100,
+        'HG002#2#chr1': 1100
     }
     
     assert result == expected, f"Expected {expected}, but got {result}"

@@ -15,7 +15,12 @@ def test_haplo_contiguous_dfs_tree():
         G.add_node(node)
     
     # Define haplotype priorities (lower value = higher priority)
-    haplo_priorities = {'haplo1': 0, 'haplo2': 1, 'other': 2}
+    # After the bug fix, ALL edges must have at least one label from the priority dict
+    haplo_priorities = {
+        'haplo1': 0,  # Highest priority
+        'haplo2': 1,  # Lower priority
+        'other': 2    # Lowest priority (for edges not in main haplotypes)
+    }
     
     # Create paths and label edges
     # Path 1: start -> A -> C -> F (haplo1)
@@ -43,9 +48,19 @@ def test_haplo_contiguous_dfs_tree():
         G.edges[edge]['haplo2'] = i * 100  # Position values
     
     # Label remaining edges as 'other' (using position values instead of binary)
+    # 'other' is now in the priority dict, so these edges are valid
     other_edges = [('start', 'E'), ('E', 'F'), ('E', 'G')]
     for i, edge in enumerate(other_edges):
         G.edges[edge]['other'] = i * 100  # Position values
+    
+    # After the bug fix, ALL edges must have at least one haplotype label
+    # Add 'other' label to any edges that don't have a label yet
+    for edge in G.edges():
+        edge_data = G.edges[edge]
+        has_haplotype = any(key in haplo_priorities for key in edge_data.keys())
+        if not has_haplotype:
+            # This edge doesn't have any haplotype label, add 'other'
+            G.edges[edge]['other'] = 999
     
     # Call the function
     reference_path = ['start']
@@ -176,6 +191,15 @@ def test_overlapping_haplotypes():
     
     # Label remaining edges as 'other'
     G.edges[('start', 'F')]['other'] = 700
+    
+    # After the bug fix, ALL edges must have at least one haplotype label
+    # Add 'other' label to any edges that don't have a label yet
+    for edge in G.edges():
+        edge_data = G.edges[edge]
+        has_haplotype = any(key in haplo_priorities for key in edge_data.keys())
+        if not has_haplotype:
+            # This edge doesn't have any haplotype label, add 'other'
+            G.edges[edge]['other'] = 999
     
     result_tree = haplo_contiguous_dfs_tree(G, haplo_priorities, ['start'])
     
