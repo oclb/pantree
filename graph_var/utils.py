@@ -115,6 +115,7 @@ def read_gfa(filename, ref_name='GRCh38'):
 @dataclass
 class GFAWalkLine:
     hap_name: str
+    sample_name: str
     contig_start: int
     walk: list[str]
 
@@ -125,16 +126,18 @@ class GFAWalkLine:
     @classmethod
     def from_parts_P(cls, parts: list[str]):
         hap_name = parts[1]
+        sample_name = parts[1]
         contig_start = 0
         walk = cls._parse_P_walk(parts[2])
-        return cls(hap_name, contig_start, walk)
+        return cls(hap_name, sample_name, contig_start, walk)
 
     @classmethod
     def from_parts_W(cls, parts: list[str]):
         hap_name = cls._get_hap_name(parts)
+        sample_name = parts[1]
         contig_start = int(parts[4]) if parts[4] != '*' else 0
         walk = cls._parse_W_walk(parts[6])
-        return cls(hap_name, contig_start, walk)
+        return cls(hap_name, sample_name, contig_start, walk)
 
     @staticmethod
     def _parse_P_walk(segment_names: str) -> list[str]:
@@ -194,7 +197,10 @@ line_getters = {
     'P': GFAWalkLine.from_parts_P,
 }
 
-def read_gfa_line_by_line(filename: str):
+def read_gfa_line_by_line(filename: str, line_types: list[str]|None = None):
+    if line_types is None:
+        line_types = ['S', 'L', 'W', 'P']
+    
     if filename.endswith('.gz'):
         opener = gzip.open
     else:
@@ -204,7 +210,7 @@ def read_gfa_line_by_line(filename: str):
         for line in file:
             parts = line.strip().split('\t')
             # Skip empty lines and header lines
-            if not parts[0] or parts[0] == 'H' or parts[0] == 'C':
+            if not parts[0] or parts[0] not in line_types:
                 continue
             line_getter = line_getters[parts[0]]
             yield line_getter(parts)
