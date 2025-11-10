@@ -18,6 +18,7 @@ from .utils import (
     GFAEdgeLine,
 )
 from .search_tree import assign_node_directions, dfs_methods
+from .genotype import Genotype
 import os
 import time
 from collections import defaultdict
@@ -154,7 +155,6 @@ class PangenomeGraph(nx.DiGraph):
         print("Reading gfa file - third pass: walks")
         walks = []
         for line in read_gfa_line_by_line(gfa_file, line_types=['W', 'P']):
-            print(line.hap_name)
             # Check if haplotype name starts with ref_name (e.g., 'GRCh38#0#chr20' starts with 'GRCh38')
             hit_reference = line.sample_name == ref_name
             if hit_reference:
@@ -219,7 +219,7 @@ class PangenomeGraph(nx.DiGraph):
             reference_tree = nx.DiGraph()
         super().__init__(directed_graph)
         self.reference_tree = reference_tree
-        self.reference_path = reference_path if reference_path else []
+        self.reference_path = reference_path
         self.variant_edges = variant_edges if variant_edges else {}
         self.haplo_priorities = haplo_priorities if haplo_priorities else {}
         self.number_of_biedges = np.sum(
@@ -405,8 +405,6 @@ class PangenomeGraph(nx.DiGraph):
         # reference tree contains positive-direction nodes only, and no inversion edges
         # self.add_biedge(self.reference_path[0], self.reference_path[1])
         positive_subgraph = self.subgraph([n for n, direction in self.nodes(data="direction") if direction == 1])
-        print(positive_subgraph.edges())
-        print(self.reference_path)
         self.reference_tree = dfs_method(positive_subgraph, reference_path=self.reference_path, **kwargs)
 
         for edge in positive_subgraph.edges():
@@ -456,68 +454,11 @@ class PangenomeGraph(nx.DiGraph):
         meta_info += f'##contig=<ID={chr_name}>\n'
 
         allele_count_dict = self.allele_count()
-
-        sample_cr_dict = defaultdict(dict)
-        sample_ca_dict = defaultdict(dict)
-        sample_lc_dict = defaultdict(list)
-
-        sample_vcf_info_dict = dict()
-
-        sample_ids = []
-        # Memory efficient way to read gfa data
-        # Supports both W-lines (GFA1.1) and P-lines (GFA1.0)
         if gfa_path:
-            print("Computing genotype for haplotypes")
-            prev_sample_name = None
-            for line in read_gfa_line_by_line(gfa_path, line_types=['W', 'P']):
-                walk = line.walk
-                haplotype_name = line.hap_name
-                sample_name = line.sample_name  # Use full haplotype name as sample name (old working behavior)
-                if sample_name != prev_sample_name:
-                    if prev_sample_name is not None:
-                        assert prev_sample_name not in sample_vcf_info_dict
-                        sample_missing_dict = {hap: set(self.get_missing_variants(lc, exclude_terminus)) for hap, lc in
-                                               sample_lc_dict.items()}
-                        sample_info_list = self.get_sample_vcf_info(prev_sample_name,
-                                                                    sample_cr_dict,
-                                                                    sample_ca_dict,
-                                                                    sample_missing_dict,
-                                                                    exclude_terminus=exclude_terminus)
-                        sample_vcf_info_dict[prev_sample_name] = sample_info_list
-
-                        sample_cr_dict.clear()
-                        sample_ca_dict.clear()
-                        sample_lc_dict.clear()
-
-                cr_dict, ca_dict, linear_coverage = self.genotype(walk, return_linear_coverage=True)
-
-                sample_cr_dict[haplotype_name] = merge_dicts([sample_cr_dict[haplotype_name], cr_dict])
-                sample_ca_dict[haplotype_name] = merge_dicts([sample_ca_dict[haplotype_name], ca_dict])
-
-                sample_lc_dict[haplotype_name].append(linear_coverage)
-
-                prev_sample_name = sample_name
-
-            sample_missing_dict = {hap: set(self.get_missing_variants(lc, exclude_terminus)) for hap, lc in
-                                sample_lc_dict.items()}
-            sample_info_list = self.get_sample_vcf_info(sample_name,
-                                                        sample_cr_dict,
-                                                        sample_ca_dict,
-                                                        sample_missing_dict,
-                                                        exclude_terminus=exclude_terminus
-                                                        )
-            sample_vcf_info_dict[sample_name] = sample_info_list
-
-            sample_cr_dict.clear()
-            sample_ca_dict.clear()
-            sample_lc_dict.clear()
-
-            if log_path:
-                log_action(log_path, f"Reading gfa, computing genotype and missing variants for haplotypes: {gfa_path}")
-
-            sample_ids = sorted(sample_vcf_info_dict.keys())
-            
-        
+            sample_to_genotype = self.get_genotype_dict(gfa_path, exclude_terminus)
+        else:
+            sample_to_genotype = {}
+        sample_ids = sorted(sample_to_genotype.keys())
         header_names = list(self.vcf_attribute_names) + sample_ids
 
         print("Writing vcf file")
@@ -587,7 +528,7 @@ class PangenomeGraph(nx.DiGraph):
 
                 # 'sample1', 'sample2', ... 9 - end
                 for sample_name in sample_ids:
-                    counts = sample_vcf_info_dict[sample_name][idx]
+                    counts = sample_to_genotype[sample_name][idx]
                     allele_data_list.append(counts)
 
                 RC = allele_count_dict[representative_variant_edge][0] if not self.is_inversion(edge) else '.'
@@ -623,6 +564,38 @@ class PangenomeGraph(nx.DiGraph):
         if log_path:
             log_action(log_path, f"Writing vcf: {vcf_filename}")
 
+    def get_genotype_dict(self, gfa_path: str, exclude_terminus: bool=True) -> dict[str, Genotype]:
+        # Memory efficient way to read gfa data
+        print("Computing genotype for haplotypes")
+        genotype_dict = {}
+        names = defaultdict(set)
+        for line in read_gfa_line_by_line(gfa_path, line_types=['W', 'P']):
+            walk = line.walk
+            haplotype_name = '#'.join(line.hap_name.split('#')[:2])
+            names[line.sample_name].add(haplotype_name)
+            genotype = Genotype.genotype(self, walk, exclude_terminus)
+            if haplotype_name in genotype_dict:
+                genotype_dict[haplotype_name].update(genotype)
+            else:
+                genotype_dict[haplotype_name] = genotype
+
+        for _, genotype in genotype_dict.items():
+            genotype.compute_missing_variants(self)
+
+        result = {} # TODO
+        # for sample_name, haplotypes in names.items():
+        #     assert len(haplotypes) in {1, 2}
+        #     if len(haplotypes) == 1:
+        #         genotype = genotype_dict[haplotypes.pop()]
+        #         result[sample_name] = genotype.haploid_genotype_string()
+        #     else:
+        #         genotype1 = genotype_dict[haplotypes.pop()]
+        #         genotype2 = genotype_dict[haplotypes.pop()]
+        #         result[sample_name] = genotype1.diploid_genotype_string(genotype2)
+            
+        return result
+
+
     def get_sample_vcf_info(self,
                             sample_name,
                             sample_cr_dict,
@@ -631,17 +604,6 @@ class PangenomeGraph(nx.DiGraph):
                             exclude_terminus=True
                             ):
         sample_vcf_info = []
-        
-        # Get the actual haplotype names for this sample from the dictionaries
-        # Haplotype names are in format: sample#haplotype#contig (e.g., 'CHM13#0#CHM13#0#chr6')
-        haplotype_names = [h for h in sample_cr_dict.keys() if h.startswith(sample_name + '#')]
-        
-        # Debug: print what we found
-        if len(haplotype_names) == 0:
-            print(f"WARNING: No haplotypes found for sample {sample_name}")
-            print(f"  sample_cr_dict keys: {list(sample_cr_dict.keys())[:3]}")
-            print(f"  sample_missing_dict keys: {list(sample_missing_dict.keys())[:3]}")
-        
         for u, v in self.sorted_variant_edges(exclude_terminus=exclude_terminus):
             representative_variant_edge = (u, v)
             representative_ref_edge = self.representative_edge(self.reference_tree_edge(representative_variant_edge))
@@ -650,23 +612,20 @@ class PangenomeGraph(nx.DiGraph):
                 u, v = edge_complement((u, v))
             edge = (u, v)
 
-            if len(haplotype_names) == 1:
-                # Haploid sample (e.g., CHM13, GRCh38)
-                haplotype_name = haplotype_names[0]
+            if sample_name.startswith(("CHM", "GRCh")):
+                haplotype_name = sample_name + '_0'
                 cr_0 = sample_cr_dict[haplotype_name].get(representative_ref_edge, 0) if not self.is_inversion(edge) else '.'
                 ca_0 = sample_ca_dict[haplotype_name].get(representative_variant_edge, 0)
 
                 count = ['.', '.', '.']
-                if haplotype_name in sample_missing_dict and representative_variant_edge in sample_missing_dict[haplotype_name]:
+                if haplotype_name in sample_missing_dict and representative_variant_edge not in sample_missing_dict[haplotype_name]:
                     count[0] = int(bool(ca_0)) if cr_0 != 0 or ca_0 != 0 else '.'
                     count[1] = cr_0
                     count[2] = ca_0
                 counts = f"{count[0]}:{count[1]}:{count[2]}"
             else:
-                # Diploid sample - sort to ensure consistent ordering (haplotype 1 then 2)
-                haplotype_names_sorted = sorted(haplotype_names)
-                haplotype1_name = haplotype_names_sorted[0]
-                haplotype2_name = haplotype_names_sorted[1]
+                haplotype1_name = sample_name + '_1'
+                haplotype2_name = sample_name + '_2'
 
                 cr_1 = sample_cr_dict[haplotype1_name].get(representative_ref_edge, 0) if not self.is_inversion(edge) else '.'
                 ca_1 = sample_ca_dict[haplotype1_name].get(representative_variant_edge, 0)
@@ -675,19 +634,20 @@ class PangenomeGraph(nx.DiGraph):
                 ca_2 = sample_ca_dict[haplotype2_name].get(representative_variant_edge, 0)
 
                 count_1 = ['.', '.', '.']
-                if haplotype1_name in sample_missing_dict and representative_variant_edge in sample_missing_dict[haplotype1_name]:
+                if haplotype1_name in sample_missing_dict and representative_variant_edge not in sample_missing_dict[haplotype1_name]:
                     count_1[0] = int(bool(ca_1)) if cr_1 != 0 or ca_1 != 0 else '.'
                     count_1[1] = cr_1
                     count_1[2] = ca_1
 
                 count_2 = ['.', '.', '.']
-                if haplotype2_name in sample_missing_dict and representative_variant_edge in sample_missing_dict[haplotype2_name]:
+                if haplotype2_name in sample_missing_dict and representative_variant_edge not in sample_missing_dict[haplotype2_name]:
                     count_2[0] = int(bool(ca_2)) if cr_2 != 0 or ca_2 != 0 else '.'
                     count_2[1] = cr_2
                     count_2[2] = ca_2
                 counts = f"{count_1[0]}|{count_2[0]}:{count_1[1]},{count_2[1]}:{count_1[2]},{count_2[2]}"
             sample_vcf_info.append(counts)
         return sample_vcf_info
+
 
 
     def write_tree(self, filename: str) -> list:
@@ -1023,7 +983,7 @@ class PangenomeGraph(nx.DiGraph):
 
         return ref_allele, alt_allele, last_letter_of_branch_point, branch_point
 
-    def genotype_and_linear_coverage_by_sample(self, walks) -> tuple[dict, dict, list]:
+    def genotype_and_linear_coverage_by_sample(self, walks) -> tuple[dict, dict, list]: # TODO
         """
         Integrates the genotype of each sample from the genotype of each walk.
         :param walks: list of walks for each sample
@@ -1050,49 +1010,6 @@ class PangenomeGraph(nx.DiGraph):
 
         return cr_dict_haplotype, ca_dict_haplotype, linear_coverages
 
-
-    def genotype(self, walk: list[str], return_linear_coverage: bool = False):
-        """
-        Computes the number of time that a walk visits each variant edge.
-        :param walk: list of nodes
-        :param return_linear_coverage: if True, returns a tuple of the genotype dictionary and the min position/max right position of nodes on the walk
-        :return: dictionary of edge-count pairs, optionally the linear coverage
-        """
-
-        # Append start and end nodes to walk
-        start = [self.termini[0] + '_+' if self.direction(walk[0]) == 1 else self.termini[1] + '_-']
-        end = [self.termini[1] + '_+' if self.direction(walk[-1]) == 1 else self.termini[0] + '_-']
-        walk = start + walk + end
-
-        if not hasattr(self, 'ref_edge_set'):
-            self.ref_edge_set = {self.representative_edge(self.reference_tree_edge(var_edge))
-                                 for var_edge in self.sorted_variant_edges(exclude_terminus=False)}
-
-        ref_edge_set = self.ref_edge_set
-
-        count_ref = {}
-        count_alt = {}
-        min_pos = inf
-        max_pos = -inf
-        for e in zip(walk[:-1], walk[1:]):
-            if not self.has_edge(*e):
-                raise ValueError(f"Specified list contains edge {e} which is not present in the graph")
-
-            if not self.edges[e]['is_representative']:
-                e = edge_complement(e)
-
-            if not self.is_terminal(e[0]) and min(*self.position(e)) < min_pos:
-                min_pos = min(*self.position(e))
-            if not self.is_terminal(e[1]) and max(*self.right_position(e)) > max_pos:
-                max_pos = max(*self.right_position(e))
-
-            if self.edges[e]['is_in_tree']:
-                if e in ref_edge_set:
-                    count_ref[e] = count_ref.get(e, 0) + 1
-            else:
-                count_alt[e] = count_alt.get(e, 0) + 1
-
-        return (count_ref, count_alt, (min_pos, max_pos)) if return_linear_coverage else (count_ref, count_alt)
 
     def count_edge_visits(self, genotype: dict) -> dict:
         """
@@ -1335,30 +1252,6 @@ class PangenomeGraph(nx.DiGraph):
         # e.g., [(0,1), (0,2), (1,2), (1,3), (2,3)] with variant edges [(0,2), (1,3)]
         return 'interlocking'
 
-
-    def get_missing_variants(self,
-                             linear_coverages: list[tuple],
-                             exclude_terminus: bool=True) -> list:
-        """
-        Computes variant edges that are missing from a haplotype.
-        :param linear_coverages: minimum and maximum positions of each walk in a haplotype."""
-
-        # order walks and variants by position
-        source_positions = np.sort([x[1] for x in linear_coverages] + [self.position('+_terminus_+')])
-        sink_positions = np.sort([x[0] for x in linear_coverages] + [self.right_position('-_terminus_+')])
-        sorted_variant_edges = self.sorted_variant_edges(exclude_terminus=exclude_terminus)
-        sorted_variant_positions = [min(*self.position(e)) for e in sorted_variant_edges]
-
-        result = []
-        for source, sink in zip(source_positions, sink_positions):
-            # indices of first and last variant edges u,v s.t. position of u in between source and sink
-            first = np.searchsorted(sorted_variant_positions, source, side='left')
-            last = np.searchsorted(sorted_variant_positions, sink, side='right')
-            for i in range(first, last):
-                if max(*self.right_position(sorted_variant_edges[i])) <= sink:
-                    result.append(sorted_variant_edges[i])
-
-        return result
 
 
     def _match_sequence_up_tree(self, sequence: str, node: str) -> bool:

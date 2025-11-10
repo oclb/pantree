@@ -6,7 +6,7 @@ import os
 from .graph import PangenomeGraph
 import click
 
-@click.command()
+@click.command(context_settings=dict(help_option_names=['-h', '--help']))
 @click.argument("gfa_file")
 @click.argument("vcf_file")
 @click.option("--chr-id", default="chr0")
