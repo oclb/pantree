@@ -19,6 +19,7 @@ from .utils import (
 )
 from .search_tree import assign_node_directions, dfs_methods
 from .genotype import Genotype
+from .vcf import write_vcf_from_graph
 import os
 import time
 from collections import defaultdict
@@ -416,6 +417,10 @@ class PangenomeGraph(nx.DiGraph):
         self.variant_edges = {(u, v) for u, v, data in self.edges(data=True)
                               if data['is_representative'] and not data['is_in_tree']}
 
+    def get_reference_edges(self) -> dict[tuple[str, str], tuple[str, str]]:
+        """Returns a dictionary mapping variant edges to their references edges."""
+        return {e: self.representative_edge(self.reference_tree_edge(e)) for e in self.variant_edges}
+
     def write_vcf(self,
                   gfa_path: Optional[str],
                   vcf_filename: str,
@@ -434,138 +439,25 @@ class PangenomeGraph(nx.DiGraph):
         :param check_degenerate: whether to exclude variants whose ref and alt alleles are identical
         :return:
         """
-        if log_path:
-            log_action(log_path, f"Start generating vcf")
-        # 'CHROM', 'POS', 'ID', 'REF', 'ALT', 'QUAL', 'FILTER', 'INFO', 'FORMAT', 'sample1', 'sample2', ...
-        meta_info = f'##fileformat=VCFv4.2\n'
-        meta_info += f'##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">\n'
-        meta_info += f'##FORMAT=<ID=CR,Number=.,Type=Integer,Description="The reference allele count for each sample\'s haplotypes">\n'
-        meta_info += f'##FORMAT=<ID=CA,Number=.,Type=Integer,Description="The alternative allele count for each sample\'s haplotypes">\n'
-        meta_info += f'##INFO=<ID=NR,Number=1,Type=String,Description="Non-reference allele">\n'
-        meta_info += f'##INFO=<ID=VT,Number=1,Type=String,Description="Variant type">\n'
-        meta_info += f'##INFO=<ID=DR,Number=2,Type=Integer,Description="Distance from reference (variant edge\'s two nodes)">\n'
-        meta_info += f'##INFO=<ID=RC,Number=1,Type=Integer,Description="The REF allele count">\n'
-        meta_info += f'##INFO=<ID=AC,Number=A,Type=Integer,Description="The ALT allele count">\n'
-        meta_info += f'##INFO=<ID=AN,Number=1,Type=Integer,Description="Total number of alleles in called genotypes">\n'
-        meta_info += f'##INFO=<ID=PV,Number=2,Type=Integer,Description="Position of variant edge\'s two nodes">\n'
-        meta_info += f'##INFO=<ID=HP,Number=.,Type=String,Description="Haplotype positions at reference tree edge (haplotype:position)">\n'
-        meta_info += f'##INFO=<ID=TR_MOTIF,Number=1,Type=String,Description="Tandem repeat motif">\n'
-        meta_info += f'##INFO=<ID=NIA,Number=1,Type=Integer,Description="Nearly identical alleles (1=yes, 0=no)">\n'
-        meta_info += f'##contig=<ID={chr_name}>\n'
+        reference_edges = self.get_reference_edges()
+        write_vcf_from_graph(
+            graph=self,
+            reference_edges=reference_edges,
+            gfa_path=gfa_path,
+            vcf_filename=vcf_filename,
+            chr_name=chr_name,
+            exclude_terminus=exclude_terminus,
+            size_threshold=size_threshold,
+            check_degenerate=check_degenerate,
+            log_path=log_path,
+        )
 
-        allele_count_dict = self.allele_count()
-        if gfa_path:
-            sample_to_genotype = self.get_genotype_dict(gfa_path, exclude_terminus)
-        else:
-            sample_to_genotype = {}
-        sample_ids = sorted(sample_to_genotype.keys())
-        header_names = list(self.vcf_attribute_names) + sample_ids
-
-        print("Writing vcf file")
-        with open(vcf_filename, 'w') as file:
-            file.write(meta_info)
-            file.write('#'+'\t'.join(header_names) + '\n')
-
-            for idx, (u, v) in tqdm(enumerate(self.sorted_variant_edges(exclude_terminus=exclude_terminus))):
-                representative_variant_edge = (u, v)
-
-                if self.direction(u) == -1 and self.direction(v) == -1:
-                    u, v = edge_complement((u, v))
-                edge = (u, v)
-
-                ref_allele, alt_allele, last_letter_of_branch_point, branch_point = self.ref_alt_alleles(edge)
-                VT = self.identify_variant_type(edge, ref_allele, alt_allele)
-
-                motif = self.annotate_repeat_motif(representative_variant_edge,
-                                                   ref_allele=ref_allele,
-                                                   alt_allele=alt_allele,
-                                                   branch_point=branch_point)
-                motif = '.' if motif is None else motif
-
-
-                if check_degenerate:
-                    if ref_allele == alt_allele:
-                        continue
-
-                prepend_letter_to_alleles = (len(ref_allele) == 0 or len(alt_allele) == 0)
-
-                new_ref = '.'
-                ref_allele_on_forward_reference_path = self.direction(edge[0]) == 1 and self.on_reference_path(edge)
-                if not ref_allele_on_forward_reference_path:
-                    new_ref = ref_allele
-                    ref_allele = '.'
-                    prepend_letter_to_alleles = False
-                
-                if prepend_letter_to_alleles:
-                    ref_allele = last_letter_of_branch_point + ref_allele
-                    alt_allele = last_letter_of_branch_point + alt_allele
-                
-                if size_threshold:
-                    ref_allele = ref_allele[:size_threshold]
-                    alt_allele = alt_allele[:size_threshold]
-
-                edge_vcf_position = self.get_vcf_position(edge, prepend_letter_to_alleles)
-
-                allele_data_list = []
-                # 'CHROM' 0
-                allele_data_list.append(chr_name)
-                # 'POS' 1
-                allele_data_list.append(str(edge_vcf_position))
-                # 'ID' 2
-                allele_data_list.append(''.join(tuple(map(lambda x: _node_recover(x), edge))))
-                # 'REF' 3
-                allele_data_list.append(ref_allele if ref_allele else '.')
-                # 'ALT' 4
-                allele_data_list.append(alt_allele if alt_allele else '.')
-                # 'QUAL' 5
-                allele_data_list.append('60')
-                # 'FILTER' 6
-                allele_data_list.append('PASS')
-                # 'INFO' 7
-                allele_data_list.append(None)
-                # 'FORMAT' 8
-                allele_data_list.append('GT:CR:CA')
-
-                # 'sample1', 'sample2', ... 9 - end
-                for sample_name in sample_ids:
-                    counts = sample_to_genotype[sample_name][idx]
-                    allele_data_list.append(counts)
-
-                RC = allele_count_dict[representative_variant_edge][0] if not self.is_inversion(edge) else '.'
-                AC = allele_count_dict[representative_variant_edge][1]
-
-                AN = RC + AC if not self.is_inversion(edge) else '.'
-
-                # Get haplotype positions for this variant edge
-                hap_positions = {hap_name: self.get_vcf_position(edge, prepend_letter_to_alleles, hap_name)
-                                for hap_name in self.haplo_priorities.keys()}
-                                
-                # Format haplotype positions as "hap1:pos1,hap2:pos2,..." or "." if empty/root
-                hp_str = ','.join([f'{hap}:{pos}' for hap, pos in sorted(hap_positions.items()) if pos is not None])
-                
-                INFO = (f'NR={new_ref if new_ref else "."};'
-                        f'VT={VT};'
-                        f'DR={int(self.nodes[u]["distance_from_reference"])},{int(self.nodes[v]["distance_from_reference"])};'
-                        f'RC={RC};'
-                        f'AC={AC};'
-                        f'AN={AN};'
-                        f'PV={int(self.nodes[u]["position"])},{int(self.nodes[v]["position"])};'
-                        f'HP={hp_str};'
-                        f'TR_MOTIF={motif}')
-
-                if nearly_identical_alleles(ref_allele, alt_allele):
-                    INFO += ';NIA=1'
-                else:
-                    INFO += ';NIA=0'
-
-                allele_data_list[7] = INFO
-
-                file.write('\t'.join(allele_data_list) + '\n')
-        if log_path:
-            log_action(log_path, f"Writing vcf: {vcf_filename}")
-
-    def get_genotype_dict(self, gfa_path: str, exclude_terminus: bool=True) -> dict[str, Genotype]:
-        # Memory efficient way to read gfa data
+    def genotypes_from_gfa(self, gfa_path: str, exclude_terminus: bool=True) -> dict[str, tuple[Genotype]]:
+        """
+        Compute the phased genotype data for each sample in a GFA file. There can be 1 or 2 haplotypes 
+        per sample, which are stored in a tuple. There can be any positive number of walks per haplotype,
+        which are aggregated together.
+        """
         print("Computing genotype for haplotypes")
         genotype_dict = {}
         names = defaultdict(set)
@@ -582,17 +474,11 @@ class PangenomeGraph(nx.DiGraph):
         for _, genotype in genotype_dict.items():
             genotype.compute_missing_variants(self)
 
-        result = {} # TODO
-        # for sample_name, haplotypes in names.items():
-        #     assert len(haplotypes) in {1, 2}
-        #     if len(haplotypes) == 1:
-        #         genotype = genotype_dict[haplotypes.pop()]
-        #         result[sample_name] = genotype.haploid_genotype_string()
-        #     else:
-        #         genotype1 = genotype_dict[haplotypes.pop()]
-        #         genotype2 = genotype_dict[haplotypes.pop()]
-        #         result[sample_name] = genotype1.diploid_genotype_string(genotype2)
-            
+        result = {}        
+        for sample_name, haplo_names in names.items():
+            assert len(haplo_names) in (1,2), "Samples should be haploid or diploid"
+            result[sample_name] = tuple(genotype_dict[name] for name in haplo_names)
+
         return result
 
 
