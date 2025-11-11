@@ -5,6 +5,7 @@ import unittest
 import os
 import tempfile
 from graph_var.graph import PangenomeGraph
+from graph_var.genotype import Genotype
 
 
 class TestVCFWriting(unittest.TestCase):
@@ -140,36 +141,36 @@ class TestGenotypeAggregation(unittest.TestCase):
     
     def test_genotype_and_linear_coverage_by_sample(self):
         """Test genotype aggregation by sample from multiple walks"""
-        # This method has a bug in graph.py line 1001 - it expects genotype to return 2 values
-        # but genotype returns 3 when return_linear_coverage=True
-        # We'll test the individual genotype calls instead
+        # Test using the Genotype class instead of the removed graph.genotype method
         
         walks = [
             ['1_+', '2_+', '4_+', '9_+', '10_+', '11_+'],
             ['1_+', '3_+', '4_+', '5_+', '7_+', '8_+', '9_+', '11_+'],
         ]
         
-        # Test that genotype works for each walk
+        # Test that Genotype.genotype works for each walk
         for walk in walks:
-            cr_dict, ca_dict, linear_coverage = self.G.genotype(walk, return_linear_coverage=True)
+            genotype = Genotype.genotype(self.G, walk, exclude_terminus=True)
             
-            self.assertIsInstance(cr_dict, dict)
-            self.assertIsInstance(ca_dict, dict)
-            self.assertIsInstance(linear_coverage, tuple)
+            self.assertIsInstance(genotype.ref_counts, dict)
+            self.assertIsInstance(genotype.alt_counts, dict)
+            self.assertIsInstance(genotype.linear_coverage, list)
             
             # Should have entries if walk visits variants
             if len(self.G.variant_edges) > 0:
                 # At least one dict should have entries
-                self.assertTrue(len(cr_dict) > 0 or len(ca_dict) > 0)
+                self.assertTrue(len(genotype.ref_counts) > 0 or len(genotype.alt_counts) > 0)
     
     def test_get_sample_vcf_info(self):
         """Test sample VCF info generation"""
         # Create sample genotype data
         sample_name = 'test_sample'
         
-        # Get actual genotype data from a walk
+        # Get actual genotype data from a walk using Genotype class
         walk = ['1_+', '2_+', '4_+', '9_+', '10_+', '11_+']
-        cr_dict, ca_dict, linear_coverage = self.G.genotype(walk, return_linear_coverage=True)
+        genotype = Genotype.genotype(self.G, walk, exclude_terminus=True)
+        cr_dict = genotype.ref_counts
+        ca_dict = genotype.alt_counts
         
         # Create sample dictionaries in the expected format
         sample_cr_dict = {

@@ -203,11 +203,12 @@ class TestGenotypeClass(unittest.TestCase):
         genotype = Genotype.genotype(self.G, walk, exclude_terminus=True)
         genotype.compute_missing_variants(self.G)
         
-        # Get a variant edge
+        # Get a variant edge and its reference edge
         variant_edges = list(self.G.sorted_variant_edges(exclude_terminus=True))
         if variant_edges:
             edge = variant_edges[0]
-            gt, cr, ca = genotype.variant_record(edge)
+            reference_edge = self.G.reference_tree_edge(edge)
+            gt, cr, ca = genotype.variant_record(edge, reference_edge)
             
             # GT should be None or int
             self.assertTrue(gt is None or isinstance(gt, int))

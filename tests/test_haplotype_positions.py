@@ -46,15 +46,17 @@ class TestHaplotypePositions(unittest.TestCase):
             
             node_data = self.G.nodes[node]
             
-            # Node should have the reference haplotype position
-            self.assertIn(
-                ref_name,
-                node_data,
+            # Node should have the reference haplotype position (format: ref#0#0)
+            # Find any key that starts with ref_name
+            ref_keys = [k for k in node_data.keys() if k.startswith(ref_name + '#')]
+            self.assertGreater(
+                len(ref_keys),
+                0,
                 f"Node {node} on reference path should have haplotype position for {ref_name}"
             )
             
             # Position should be a valid integer
-            position = node_data[ref_name]
+            position = node_data[ref_keys[0]]
             self.assertIsInstance(
                 position,
                 int,
@@ -253,8 +255,9 @@ class TestHaplotypePositionsC4A(unittest.TestCase):
             
             node_data = self.G.nodes[node]
             
-            # Node should have the reference haplotype position
-            if ref_name not in node_data:
+            # Node should have the reference haplotype position (format: ref#0#0)
+            ref_keys = [k for k in node_data.keys() if k.startswith(ref_name + '#')]
+            if len(ref_keys) == 0:
                 nodes_without_pos.append(node)
         
         self.assertEqual(

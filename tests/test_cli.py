@@ -53,13 +53,13 @@ def test_main_simple_nested():
             header_fields = header_line.split('\t')
             sample_names = header_fields[9:]  # Samples start after FORMAT column
             
-            # Assert 1: Verify we have all expected samples (now in sample#haplotype#contig format)
-            # Sample names are now like: 'ref#0#0', 'sample1#1#0', 'sample1#2#0', 'sample2#1#0', 'sample2#2#0'
+            # Assert 1: Verify we have all expected samples (now aggregated by sample name)
+            # With the new genotype system, samples are aggregated: 'ref', 'sample1', 'sample2'
             assert any('ref' in s for s in sample_names), f"ref sample not found in VCF. Samples: {sample_names}"
             assert any('sample1' in s for s in sample_names), f"sample1 not found in VCF. Samples: {sample_names}"
             assert any('sample2' in s for s in sample_names), f"sample2 not found in VCF. Samples: {sample_names}"
-            assert len(sample_names) == 5, f"Expected 5 samples (ref#0#0, sample1#1#0, sample1#2#0, sample2#1#0, sample2#2#0), got {len(sample_names)}: {sample_names}"
-            print(f"\n✓ All 5 samples present: {sample_names}")
+            assert len(sample_names) == 3, f"Expected 3 samples (ref, sample1, sample2), got {len(sample_names)}: {sample_names}"
+            print(f"\n✓ All 3 samples present: {sample_names}")
             
             # Assert 2: Verify we have the expected number of variants (4 variants in the reference file)
             assert len(variant_lines) == 4, f"Expected 4 variants, got {len(variant_lines)}"

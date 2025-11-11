@@ -10,7 +10,6 @@ from graph_var.vcf import (
     _generate_vcf_metadata,
     _build_genotype_record,
     _build_vcf_record,
-    _build_info_field,
     write_vcf_from_graph
 )
 
@@ -209,44 +208,6 @@ class TestInfoField(unittest.TestCase):
         cls.gfa_file = os.path.join(test_dir, "data", "simple_nested.gfa")
         cls.G = PangenomeGraph.from_gfa_line_by_line(cls.gfa_file, ref_name='ref')
     
-    def test_build_info_field(self):
-        """Test that INFO field is built correctly"""
-        # Get a variant edge
-        variant_edges = list(self.G.sorted_variant_edges(exclude_terminus=True))
-        self.assertGreater(len(variant_edges), 0)
-        
-        edge = variant_edges[0]
-        u, v = edge
-        
-        info = _build_info_field(
-            new_ref='.',
-            VT='SNP',
-            graph=self.G,
-            u=u,
-            v=v,
-            RC=10,
-            AC=5,
-            AN=15,
-            hp_str='hap1:100,hap2:105',
-            motif='.',
-            ref_allele='A',
-            alt_allele='T'
-        )
-        
-        # Should be a string
-        self.assertIsInstance(info, str)
-        
-        # Should contain all required fields
-        self.assertIn('NR=', info)
-        self.assertIn('VT=', info)
-        self.assertIn('DR=', info)
-        self.assertIn('RC=', info)
-        self.assertIn('AC=', info)
-        self.assertIn('AN=', info)
-        self.assertIn('PV=', info)
-        self.assertIn('HP=', info)
-        self.assertIn('TR_MOTIF=', info)
-        self.assertIn('NIA=', info)
 
 
 class TestSampleOrdering(unittest.TestCase):
