@@ -16,8 +16,8 @@
 You can install `pantree` using `uv`:
 
 ```bash
-git clone https://github.com/oclb/graph_var.git
-cd graph_var
+git clone https://github.com/oclb/pantree.git
+cd pantree
 uv venv
 uv sync
 ```
