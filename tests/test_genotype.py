@@ -4,85 +4,7 @@ Unit tests for genotype-related functionality
 import unittest
 import os
 from graph_var.graph import PangenomeGraph
-
-
-class TestGenotype(unittest.TestCase):
-    """Test genotype computation and related methods"""
-    
-    @classmethod
-    def setUpClass(cls):
-        """Load the test GFA file once for all tests"""
-        test_dir = os.path.dirname(__file__)
-        cls.gfa_file = os.path.join(test_dir, "data", "simple_nested.gfa")
-        cls.G = PangenomeGraph.from_gfa_line_by_line(cls.gfa_file, ref_name='ref')
-    
-    def test_genotype_with_walk(self):
-        """Test genotype computation from a walk"""
-        # Use a walk in the correct format (list of node_ids)
-        walk = ['1_+', '2_+', '4_+', '9_+', '10_+', '11_+']
-        result = self.G.genotype(walk, return_linear_coverage=True)
-        
-        # Should return a tuple of (cr_dict, ca_dict, linear_coverage)
-        self.assertIsInstance(result, tuple)
-        self.assertEqual(len(result), 3)
-        cr_dict, ca_dict, linear_coverage = result
-        self.assertIsInstance(cr_dict, dict)
-        self.assertIsInstance(ca_dict, dict)
-        # linear_coverage is a tuple of (min_pos, max_pos)
-        self.assertIsInstance(linear_coverage, tuple)
-    
-    def test_get_missing_variants(self):
-        """Test missing variant detection from linear coverage"""
-        walk = ['1_+', '2_+', '4_+', '9_+', '10_+', '11_+']
-        _, _, linear_coverage = self.G.genotype(walk, return_linear_coverage=True)
-        
-        missing = self.G.get_missing_variants([linear_coverage], exclude_terminus=True)
-        self.assertIsInstance(missing, list)
-    
-    def test_count_edge_visits(self):
-        """Test edge visit counting from genotype"""
-        # Test with reference walk
-        walk1 = ['1_+', '2_+', '4_+', '9_+', '10_+', '11_+']
-        cr_dict1, ca_dict1, _ = self.G.genotype(walk1, return_linear_coverage=True)
-        
-        # count_edge_visits expects only variant edges (alt alleles)
-        genotype1 = ca_dict1
-        
-        # Count edge visits
-        edge_visits1 = self.G.count_edge_visits(genotype1)
-        self.assertIsInstance(edge_visits1, dict)
-        # Should have at least the variant edges from genotype
-        for edge in genotype1:
-            self.assertIn(edge, edge_visits1)
-        
-        # Test with alternative walk that takes different path
-        walk2 = ['1_+', '3_+', '4_+', '5_+', '7_+', '8_+', '9_+', '11_+']
-        cr_dict2, ca_dict2, _ = self.G.genotype(walk2, return_linear_coverage=True)
-        genotype2 = ca_dict2
-        
-        edge_visits2 = self.G.count_edge_visits(genotype2)
-        self.assertIsInstance(edge_visits2, dict)
-        
-        # Different walks should produce different edge visits
-        self.assertNotEqual(edge_visits1, edge_visits2)
-    
-    def test_count_edge_visits_invalid_genotype(self):
-        """Test that invalid genotype raises ValueError"""
-        # Get a valid genotype first
-        walk = ['1_+', '2_+', '4_+', '9_+', '10_+', '11_+']
-        _, ca_dict, _ = self.G.genotype(walk, return_linear_coverage=True)
-        genotype = ca_dict.copy()
-        
-        # Make it invalid by setting a visit count to 2 (graph is acyclic, so this is impossible)
-        if genotype:
-            first_edge = list(genotype.keys())[0]
-            genotype[first_edge] = 2
-            
-            # Should raise ValueError for invalid genotype
-            with self.assertRaises(ValueError) as context:
-                self.G.count_edge_visits(genotype)
-            
-            self.assertIn("does not correspond to any valid walk", str(context.exception))
+from graph_var.genotype import Genotype
 
 
 class TestPositionAndDistance(unittest.TestCase):
@@ -183,6 +105,182 @@ class TestSNPAndMNP(unittest.TestCase):
         """Test MNP detection"""
         mnps = [e for e in self.G.variant_edges if self.G.is_mnp(e)]
         self.assertIsInstance(mnps, list)
+
+
+class TestGenotypeClass(unittest.TestCase):
+    """Test the Genotype dataclass and its methods"""
+    
+    @classmethod
+    def setUpClass(cls):
+        """Load the test GFA file once for all tests"""
+        test_dir = os.path.dirname(__file__)
+        cls.gfa_file = os.path.join(test_dir, "data", "simple_nested.gfa")
+        cls.G = PangenomeGraph.from_gfa_line_by_line(cls.gfa_file, ref_name='ref')
+    
+    def test_genotype_creation(self):
+        """Test creating a Genotype from a walk"""
+        walk = ['1_+', '2_+', '4_+', '9_+', '10_+', '11_+']
+        genotype = Genotype.genotype(self.G, walk, exclude_terminus=True)
+        
+        # Check that genotype is a Genotype instance
+        self.assertIsInstance(genotype, Genotype)
+        
+        # Check that it has the expected attributes
+        self.assertIsInstance(genotype.ref_counts, dict)
+        self.assertIsInstance(genotype.alt_counts, dict)
+        self.assertIsInstance(genotype.linear_coverage, list)
+        self.assertEqual(genotype.exclude_terminus, True)
+        self.assertIsNone(genotype.missing_variants)
+    
+    def test_genotype_linear_coverage(self):
+        """Test that linear coverage is computed correctly"""
+        walk = ['1_+', '2_+', '4_+', '9_+', '10_+', '11_+']
+        genotype = Genotype.genotype(self.G, walk, exclude_terminus=True)
+        
+        # Should have exactly one coverage interval
+        self.assertEqual(len(genotype.linear_coverage), 1)
+        min_pos, max_pos = genotype.linear_coverage[0]
+        
+        # Min should be less than max
+        self.assertLess(min_pos, max_pos)
+        
+        # Both should be non-negative
+        self.assertGreaterEqual(min_pos, 0)
+        self.assertGreaterEqual(max_pos, 0)
+    
+    def test_genotype_update(self):
+        """Test updating a genotype with another genotype"""
+        walk1 = ['1_+', '2_+', '4_+', '9_+', '10_+', '11_+']
+        walk2 = ['1_+', '3_+', '4_+', '9_+', '11_+']
+        
+        genotype1 = Genotype.genotype(self.G, walk1, exclude_terminus=True)
+        genotype2 = Genotype.genotype(self.G, walk2, exclude_terminus=True)
+        
+        # Store original counts
+        orig_ref_count = sum(genotype1.ref_counts.values())
+        orig_alt_count = sum(genotype1.alt_counts.values())
+        orig_coverage_len = len(genotype1.linear_coverage)
+        
+        # Update genotype1 with genotype2
+        genotype1.update(genotype2)
+        
+        # Check that counts increased
+        new_ref_count = sum(genotype1.ref_counts.values())
+        new_alt_count = sum(genotype1.alt_counts.values())
+        new_coverage_len = len(genotype1.linear_coverage)
+        
+        # At least one should have increased
+        self.assertTrue(
+            new_ref_count >= orig_ref_count or 
+            new_alt_count >= orig_alt_count
+        )
+        
+        # Coverage should have been appended
+        self.assertEqual(new_coverage_len, orig_coverage_len + 1)
+    
+    def test_compute_missing_variants(self):
+        """Test computing missing variants for a genotype"""
+        walk = ['1_+', '2_+', '4_+', '9_+', '10_+', '11_+']
+        genotype = Genotype.genotype(self.G, walk, exclude_terminus=True)
+        
+        # Initially missing_variants should be None
+        self.assertIsNone(genotype.missing_variants)
+        
+        # Compute missing variants
+        genotype.compute_missing_variants(self.G)
+        
+        # Now it should be a set
+        self.assertIsInstance(genotype.missing_variants, set)
+        
+        # All elements should be tuples (edges)
+        for variant in genotype.missing_variants:
+            self.assertIsInstance(variant, tuple)
+            self.assertEqual(len(variant), 2)
+    
+    def test_variant_record(self):
+        """Test getting variant record for an edge"""
+        walk = ['1_+', '2_+', '4_+', '9_+', '10_+', '11_+']
+        genotype = Genotype.genotype(self.G, walk, exclude_terminus=True)
+        genotype.compute_missing_variants(self.G)
+        
+        # Get a variant edge
+        variant_edges = list(self.G.sorted_variant_edges(exclude_terminus=True))
+        if variant_edges:
+            edge = variant_edges[0]
+            gt, cr, ca = genotype.variant_record(edge)
+            
+            # GT should be None or int
+            self.assertTrue(gt is None or isinstance(gt, int))
+            
+            # CR and CA should be integers
+            self.assertIsInstance(cr, int)
+            self.assertIsInstance(ca, int)
+            
+            # Both should be non-negative
+            self.assertGreaterEqual(cr, 0)
+            self.assertGreaterEqual(ca, 0)
+
+
+class TestGenotypesFromGFA(unittest.TestCase):
+    """Test the genotypes_from_gfa method"""
+    
+    @classmethod
+    def setUpClass(cls):
+        """Load the test GFA file once for all tests"""
+        test_dir = os.path.dirname(__file__)
+        cls.gfa_file = os.path.join(test_dir, "data", "simple_nested.gfa")
+        cls.G = PangenomeGraph.from_gfa_line_by_line(cls.gfa_file, ref_name='ref')
+    
+    def test_genotypes_from_gfa_returns_dict(self):
+        """Test that genotypes_from_gfa returns a dictionary"""
+        result = self.G.genotypes_from_gfa(self.gfa_file, exclude_terminus=True)
+        
+        # Should return a dictionary
+        self.assertIsInstance(result, dict)
+    
+    def test_genotypes_from_gfa_has_samples(self):
+        """Test that genotypes_from_gfa returns genotypes for each sample"""
+        result = self.G.genotypes_from_gfa(self.gfa_file, exclude_terminus=True)
+        
+        # Should have sample1 and sample2 based on the GFA file
+        self.assertIn('sample1', result)
+        self.assertIn('sample2', result)
+    
+    def test_genotypes_from_gfa_tuple_structure(self):
+        """Test that each sample has a tuple of genotypes"""
+        result = self.G.genotypes_from_gfa(self.gfa_file, exclude_terminus=True)
+        
+        for sample_name, genotypes in result.items():
+            # Each value should be a tuple
+            self.assertIsInstance(genotypes, tuple)
+            
+            # Should have 1 or 2 haplotypes
+            self.assertIn(len(genotypes), (1, 2))
+            
+            # Each genotype should be a Genotype instance
+            for genotype in genotypes:
+                self.assertIsInstance(genotype, Genotype)
+    
+    def test_genotypes_from_gfa_has_missing_variants(self):
+        """Test that genotypes have missing_variants computed"""
+        result = self.G.genotypes_from_gfa(self.gfa_file, exclude_terminus=True)
+        
+        for sample_name, genotypes in result.items():
+            for genotype in genotypes:
+                # missing_variants should be computed (not None)
+                self.assertIsNotNone(genotype.missing_variants)
+                self.assertIsInstance(genotype.missing_variants, set)
+    
+    def test_genotypes_from_gfa_diploid_samples(self):
+        """Test that diploid samples have 2 haplotypes"""
+        result = self.G.genotypes_from_gfa(self.gfa_file, exclude_terminus=True)
+        
+        # Based on simple_nested.gfa, both samples should be diploid
+        for sample_name in ['sample1', 'sample2']:
+            if sample_name in result:
+                genotypes = result[sample_name]
+                self.assertEqual(len(genotypes), 2, 
+                               f"{sample_name} should have 2 haplotypes")
 
 
 if __name__ == '__main__':
