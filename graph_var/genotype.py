@@ -1,4 +1,7 @@
 from dataclasses import dataclass
+from math import inf
+import numpy as np
+from .utils import edge_complement
 
 @dataclass
 class Genotype:
@@ -6,10 +9,10 @@ class Genotype:
     alt_counts: dict[str, int]
     linear_coverage: list[tuple[int, int]]
     exclude_terminus: bool
-    missing_variants: list[tuple[str, str]] | None = None
+    missing_variants: set[tuple[str, str]] | None = None
 
     @classmethod
-    def genotype(cls, graph: PangenomeGraph, walk: list[str], exclude_terminus: bool):
+    def genotype(cls, graph: "PangenomeGraph", walk: list[str], exclude_terminus: bool):
         """
         Computes the number of time that a walk visits each variant edge.
         :param graph: PangenomeGraph object
@@ -21,12 +24,6 @@ class Genotype:
         start = [graph.termini[0] + '_+' if graph.direction(walk[0]) == 1 else graph.termini[1] + '_-']
         end = [graph.termini[1] + '_+' if graph.direction(walk[-1]) == 1 else graph.termini[0] + '_-']
         walk = start + walk + end
-
-        if not hasattr(graph, 'ref_edge_set'):
-            graph.ref_edge_set = {graph.representative_edge(graph.reference_tree_edge(var_edge))
-                                 for var_edge in graph.sorted_variant_edges(exclude_terminus=exclude_terminus)}
-
-        ref_edge_set = graph.ref_edge_set
 
         count_ref = {}
         count_alt = {}
@@ -45,8 +42,7 @@ class Genotype:
                 max_pos = max(*graph.right_position(e))
 
             if graph.edges[e]['is_in_tree']:
-                if e in ref_edge_set:
-                    count_ref[e] = count_ref.get(e, 0) + 1
+                count_ref[e] = count_ref.get(e, 0) + 1
             else:
                 count_alt[e] = count_alt.get(e, 0) + 1
 
@@ -60,12 +56,10 @@ class Genotype:
         self.linear_coverage += other.linear_coverage
 
     def compute_missing_variants(self,
-                             graph: PangenomeGraph):
+                             graph: "PangenomeGraph"):
         """
         Computes variant edges that are missing from a haplotype.
         :param graph: PangenomeGraph object"""
-
-        # print(f"Linear coverages: {linear_coverages}")
 
         # order walks and variants by position
         source_positions = np.sort([x[1] for x in self.linear_coverage] + [graph.position('+_terminus_+')])
@@ -79,9 +73,20 @@ class Genotype:
             first = np.searchsorted(sorted_variant_positions, source, side='left')
             last = np.searchsorted(sorted_variant_positions, sink, side='right')
             for i in range(first, last):
-                if max(*self.right_position(sorted_variant_edges[i])) <= sink:
+                if max(*graph.right_position(sorted_variant_edges[i])) <= sink:
                     result.append(sorted_variant_edges[i])
         
-        self.missing_variants = result
+        self.missing_variants = set(result)
 
+    def variant_record(self, variant_edge: tuple[str, str], reference_edge: tuple[str, str]) -> tuple[int|None, int, int|None]:
+        """
+        For variant edge e, returns (GT, CR, CA) where GT is the genotype, 
+        CR is the reference allele count, and CA is the alternative allele count.
+        """
+        cr = self.ref_counts.get(reference_edge, 0)
+        ca = self.alt_counts.get(variant_edge, 0)
+        gt = None if variant_edge in self.missing_variants else int(ca > 0)
+        if cr + ca > 0:
+            assert gt is not None, "A missing genotype should have allele counts of 0"
+        return gt, cr, ca
         
