@@ -3,7 +3,6 @@ VCF file writing functionality for pangenome graphs.
 """
 from typing import Optional, TYPE_CHECKING, Callable
 from dataclasses import dataclass
-from tqdm import tqdm
 from importlib.metadata import version, PackageNotFoundError
 import logging
 from .utils import (
@@ -497,23 +496,19 @@ def write_vcf_from_graph(
     """
     logger.info(f"Start generating vcf")
     
-    # Default INFO fields if none specified
     if info_fields is None:
         info_fields = _get_default_info_fields()
     
-    # Get reference edges from graph
     reference_edges = graph.get_reference_edges()
     
-    # Get genotypes if GFA path provided
     if gfa_path:
+        logger.info(f"Getting genotypes from GFA file: {gfa_path}")
         sample_to_genotype = graph.genotypes_from_gfa(gfa_path, exclude_terminus)
     else:
         sample_to_genotype = {}
     
-    # Preserve order from GFA file
     sample_ids = list(sample_to_genotype.keys())
     
-    # Generate VCF header
     vcf_header = _build_vcf_header(chr_name, info_fields, sample_ids)
     
     logger.info(f"Writing vcf: {vcf_filename}")
