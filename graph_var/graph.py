@@ -111,22 +111,32 @@ class PangenomeGraph(nx.DiGraph):
             raise TypeError
 
     @classmethod
-    def from_gfa_line_by_line(cls,
+    def from_gfa(cls,
                  gfa_file: str,
                  ref_name: str = 'GRCh38',
-                 log_path: str = None,
+                 logger: Optional[logging.Logger] = None,
                  return_walks: bool = False,
                  dfs_method_name: str = 'max_weight',
                  priority_dict: dict[str, int] = None,
-                 verbose: bool = False,
                  ):
         """
         Reads a .gfa file into a PangenomeGraph object.
         :param gfa_file: path to a file name ending in .gfa
-        :param verbose: if True, log to console
+        :param ref_name: name of the reference sample
+        :param logger: Logger instance (if None, uses a null logger that does nothing)
+        :param return_walks: if True, return (graph, walks) tuple
+        :param dfs_method_name: DFS method for tree construction ('max_weight' or 'contiguous')
+        :param priority_dict: dict mapping sample names to priority integers (lower = higher priority)
         """
-        logger = setup_logger(log_path=log_path, verbose=verbose) if (log_path or verbose) else logging.getLogger('pantree')
-        logger.info(f"Start constructing pangenome graph")
+        # Use null logger if none provided
+        if logger is None:
+            logger = logging.getLogger('pantree')
+            logger.addHandler(logging.NullHandler())
+            logger.setLevel(logging.CRITICAL + 1)  # Disable all logging
+        
+        # Log input parameters
+        logger.info(f"Loading GFA file: {gfa_file}")
+        logger.info(f"Parameters: ref_name={ref_name}, dfs_method={dfs_method_name}, priority_dict={priority_dict}")
 
         if not os.path.exists(gfa_file):
             msg = f"GFA file not found: {gfa_file}"
@@ -200,6 +210,10 @@ class PangenomeGraph(nx.DiGraph):
 
         return (G, walks) if return_walks else G
 
+    @classmethod
+    def from_gfa_line_by_line(cls, *args, **kwargs):
+        """Backward compatibility alias for from_gfa."""
+        return cls.from_gfa(*args, **kwargs)
 
     def __init__(self,
                  directed_graph: nx.classes.digraph.DiGraph = None,
@@ -450,6 +464,12 @@ class PangenomeGraph(nx.DiGraph):
             check_degenerate=check_degenerate,
         )
 
+    def genotype(self, walk: list[str], exclude_terminus: bool=True) -> Genotype:
+        """
+        Compute the phased genotype data for a single walk.
+        """
+        return Genotype.genotype(self, walk, exclude_terminus)
+
     def genotypes_from_gfa(self, gfa_path: str, exclude_terminus: bool=True) -> dict[str, tuple[Genotype]]:
         """
         Compute the phased genotype data for each sample in a GFA file. There can be 1 or 2 haplotypes 
@@ -463,7 +483,7 @@ class PangenomeGraph(nx.DiGraph):
             walk = line.walk
             haplotype_name = '#'.join(line.hap_name.split('#')[:2])
             names[line.sample_name].add(haplotype_name)
-            genotype = Genotype.genotype(self, walk, exclude_terminus)
+            genotype = self.genotype(walk, exclude_terminus)
             if haplotype_name in genotype_dict:
                 genotype_dict[haplotype_name].update(genotype)
             else:

@@ -33,47 +33,65 @@ pantree <gfa_file> <vcf_file> [options]
 - `vcf_file`: Output path for VCF file
 
 ### Optional Arguments
-- `--chr-id`: Chromosome ID for VCF file (default: "chr0")
-- `--ref-name`: Reference name to use (default: "GRCh38")
-- `--no-genotypes`: Skip writing genotype information to VCF
+- `--chr-id TEXT`: Chromosome ID for VCF output (default: "chr0")
+- `--ref-name TEXT`: Reference sample name (default: "GRCh38")
+- `--no-genotypes`: Skip genotype computation
+- `--log-path TEXT`: Path to log file for tracking progress and memory usage
+- `--verbose, -v`: Enable verbose logging to console
+- `--dfs-method [max_weight|contiguous]`: DFS method for reference tree construction (default: "max_weight")
+  - `max_weight`: Prioritize edges with higher weights (more walks)
+  - `contiguous`: Prioritize contiguous haplotype paths
+- `--priority-samples TEXT`: Comma-separated list of sample names. For haplotypes belonging to samples in this list, haplotype positions are computed (for variant edges whose branch point belongs to the haplotype). With the 'contiguous' DFS method, these haplotypes are prioritized when building the DFS tree, in the order they are specified. 
 
 ### Example Usage
 ```bash
-# Basic usage - analyze a GFA file and output VCF
 pantree input.gfa output.vcf
 
-# Specify chromosome ID
-pantree input.gfa output.vcf --chr-id chr20
-
-# Use a different reference name
-pantree input.gfa output.vcf --ref-name hg19
-
-# Generate VCF without genotype information
-pantree input.gfa output.vcf --no-genotypes
-
+pantree input.gfa output.vcf \
+  --chr-id chr20 \
+  --ref-name GRCh38 \
+  --log-path analysis.log \
+  --verbose \
+  --dfs-method contiguous \
+  --priority-samples "GRCh38,CHM13,HG002"
 ```
 
-## Usage
+## Python API Usage
 ```python
-from graph_var import PangenomeGraph
+from graph_var import PangenomeGraph, Genotype
+from graph_var.logging import setup_logger
 
-# Read a .gfa file
 gfa_path = "/path/to/graph.gfa"
-reference_path_index = 1
-G, walks, walk_sample_names = PangenomeGraph.from_gfa(gfa_path, 
-                                                return_walks=True, compressed=False, 
-                                                reference_path_index=reference_path_index)
 
-# Generate vcf file
+logger = setup_logger(log_path="analysis.log", verbose=True)
+G: PangenomeGraph = PangenomeGraph.from_gfa(
+    gfa_path, 
+    ref_name="GRCh38",
+    logger=logger,
+    dfs_method_name="max_weight",
+    priority_dict={"GRCh38": 0, "CHM13": 1, "HG002": 2}
+)
+
+# Also return walks; causes increased memory requirements
+walks: list[list[str]]
+G, walks = PangenomeGraph.from_gfa(gfa_path, return_walks=True)
+
+# Get the genotype of some walk
+genotype: Genotype = G.genotype(walks[0])
+
+# Generate VCF file with genotypes
 vcf_path = "/path/to/output.vcf"
 chr_id = "chr1"
 G.write_vcf(gfa_path, vcf_path, chr_id)
 
-# Enumerate variants of different types
-edge_type_count: dict = G.variant_edges_summary()
+# Generate VCF without genotypes
+G.write_vcf(None, vcf_path, chr_id)
 
-# Get the genotype of a walk, then reconstruct edge visit counts
-genotype: dict = G.genotype(walks[0])
-edge_visit_counts: dict = G.count_edge_visits(genotype)
+# Get genotypes from GFA
+sample_to_genotype = G.genotypes_from_gfa(gfa_path)
 
+# Access graph properties
+print(f"Number of nodes: {G.number_of_nodes()}")
+print(f"Number of variant edges: {len(G.variant_edges)}")
+print(f"Reference path length: {len(G.reference_path)}")
 ```
