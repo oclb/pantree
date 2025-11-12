@@ -10,7 +10,7 @@ from .utils import (
     node_recover,
 )
 from .gfa import read_gfa_line_by_line, GFAWalkLine
-from .logging import setup_logger
+from .logger import setup_logger
 import logging
 from .search_tree import assign_node_directions, dfs_methods
 from .genotype import Genotype

@@ -4,7 +4,7 @@ import argparse
 import sys
 import os
 from .graph import PangenomeGraph
-from .logging import setup_logger
+from .logger import setup_logger
 import click
 
 @click.command(context_settings=dict(help_option_names=['-h', '--help']))

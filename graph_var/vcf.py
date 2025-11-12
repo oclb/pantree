@@ -559,4 +559,4 @@ def write_vcf_from_graph(
             )
             
             file.write(vcf_record.to_vcf_line())
-    
+
