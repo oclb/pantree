@@ -7,9 +7,10 @@ import tempfile
 from graph_var.graph import PangenomeGraph
 from graph_var.genotype import Genotype
 from graph_var.vcf import (
-    _generate_vcf_metadata,
     _build_genotype_record,
-    _build_vcf_record,
+    _VariantRecord,
+    _VariantData,
+    _get_default_info_fields,
     write_vcf_from_graph
 )
 
@@ -18,29 +19,28 @@ class TestVCFMetadata(unittest.TestCase):
     """Test VCF metadata generation"""
     
     def test_generate_vcf_metadata(self):
-        """Test that VCF metadata is generated correctly"""
-        chr_name = "chr1"
-        metadata = _generate_vcf_metadata(chr_name)
+        """Test that VCF INFO fields are defined correctly"""
+        info_fields = _get_default_info_fields()
         
-        # Check that it's a string
-        self.assertIsInstance(metadata, str)
+        # Check that we have the expected INFO fields
+        field_ids = [field.id for field in info_fields]
+        expected_fields = ['NR', 'VT', 'DR', 'RC', 'AC', 'AN', 'HP', 'TR_MOTIF', 'NIA']
         
-        # Check for required VCF header lines
-        self.assertIn("##fileformat=VCFv4.2", metadata)
-        self.assertIn("##FORMAT=<ID=GT", metadata)
-        self.assertIn("##FORMAT=<ID=CR", metadata)
-        self.assertIn("##FORMAT=<ID=CA", metadata)
-        self.assertIn("##INFO=<ID=NR", metadata)
-        self.assertIn("##INFO=<ID=VT", metadata)
-        self.assertIn("##INFO=<ID=DR", metadata)
-        self.assertIn("##INFO=<ID=RC", metadata)
-        self.assertIn("##INFO=<ID=AC", metadata)
-        self.assertIn("##INFO=<ID=AN", metadata)
-        self.assertIn("##INFO=<ID=PV", metadata)
-        self.assertIn("##INFO=<ID=HP", metadata)
-        self.assertIn("##INFO=<ID=TR_MOTIF", metadata)
-        self.assertIn("##INFO=<ID=NIA", metadata)
-        self.assertIn(f"##contig=<ID={chr_name}>", metadata)
+        for expected_id in expected_fields:
+            self.assertIn(expected_id, field_ids, f"Missing INFO field: {expected_id}")
+        
+        # Check that each field has required attributes
+        for field in info_fields:
+            self.assertTrue(hasattr(field, 'id'))
+            self.assertTrue(hasattr(field, 'number'))
+            self.assertTrue(hasattr(field, 'type'))
+            self.assertTrue(hasattr(field, 'description'))
+            self.assertTrue(hasattr(field, 'evaluate'))
+            
+            # Check that get_header returns a string
+            header = field.get_header()
+            self.assertIsInstance(header, str)
+            self.assertIn(f"##INFO=<ID={field.id}", header)
 
 
 class TestGenotypeRecord(unittest.TestCase):
@@ -164,38 +164,46 @@ class TestVCFRecord(unittest.TestCase):
     
     def test_build_vcf_record_structure(self):
         """Test that VCF records have correct structure"""
-        chr_name = "chr1"
-        edge_vcf_position = 100
-        edge = ('1_+', '2_+')
-        ref_allele = "A"
-        alt_allele = "T"
-        sample_ids = ['sample1', 'sample2']
-        genotype_records = ['0:1:0', '0|1:1,0:0,1']
-        
-        record = _build_vcf_record(
-            chr_name=chr_name,
-            edge_vcf_position=edge_vcf_position,
-            edge=edge,
-            ref_allele=ref_allele,
-            alt_allele=alt_allele,
-            sample_ids=sample_ids,
-            genotype_records=genotype_records
+        # Create a mock _VariantData
+        variant_info = _VariantData(
+            chr_name="chr1",
+            ref_allele_raw="A",
+            alt_allele_raw="T",
+            edge_data={'is_back_edge': False, 'is_inversion': False, 'motif': None},
+            node_u_data={'direction': 1, 'distance_from_reference': 0, 'position': 100},
+            node_v_data={'direction': 1, 'distance_from_reference': 0, 'position': 101, 'on_reference_path': 1},
+            branch_point_node_data={'sequence': 'ACGT', 'position': 99},
+            ref_allele_count=1,
+            alt_allele_count=1,
+            context={'size_threshold': None, 'haplotype_fields': set(), 'qual': '60', 'filter_field': 'PASS', 'format_field': 'GT:CR:CA'}
         )
         
-        # Should be a list
-        self.assertIsInstance(record, list)
+        edge = ('1_+', '2_+')
+        genotype_records = ['0:1:0', '0|1:1,0:0,1']
+        info_fields = _get_default_info_fields()
         
-        # Should have 9 fixed fields + number of samples
-        self.assertEqual(len(record), 9 + len(sample_ids))
+        record = _VariantRecord.from_variant_data(
+            variant_info=variant_info,
+            edge=edge,
+            genotype_records=genotype_records,
+            info_fields=info_fields
+        )
         
-        # Check fixed fields
-        self.assertEqual(record[0], chr_name)  # CHROM
-        self.assertEqual(record[1], str(edge_vcf_position))  # POS
-        self.assertEqual(record[3], ref_allele)  # REF
-        self.assertEqual(record[4], alt_allele)  # ALT
-        self.assertEqual(record[5], '60')  # QUAL
-        self.assertEqual(record[6], 'PASS')  # FILTER
-        self.assertEqual(record[8], 'GT:CR:CA')  # FORMAT
+        # Check fields
+        self.assertEqual(record.chr_name, "chr1")
+        self.assertEqual(record.vcf_position, 100)
+        self.assertEqual(record.ref_allele, "A")
+        self.assertEqual(record.alt_allele, "T")
+        self.assertEqual(record.qual, '60')
+        self.assertEqual(record.filter_field, 'PASS')
+        self.assertEqual(record.format_field, 'GT:CR:CA')
+        self.assertEqual(len(record.genotype_records), 2)
+        
+        # Test to_vcf_line
+        vcf_line = record.to_vcf_line()
+        self.assertIsInstance(vcf_line, str)
+        fields = vcf_line.split('\t')
+        self.assertEqual(len(fields), 9 + len(genotype_records))
 
 
 class TestInfoField(unittest.TestCase):
@@ -268,13 +276,13 @@ class TestWriteVCF(unittest.TestCase):
         
         try:
             # Write VCF
-            reference_edges = self.G.get_reference_edges()
+            import logging
             write_vcf_from_graph(
                 graph=self.G,
-                reference_edges=reference_edges,
                 gfa_path=self.gfa_file,
                 vcf_filename=vcf_path,
                 chr_name='chr1',
+                logger=logging.getLogger('pantree'),
                 exclude_terminus=True
             )
             
@@ -308,13 +316,13 @@ class TestWriteVCF(unittest.TestCase):
         
         try:
             # Write VCF without genotypes
-            reference_edges = self.G.get_reference_edges()
+            import logging
             write_vcf_from_graph(
                 graph=self.G,
-                reference_edges=reference_edges,
                 gfa_path=None,  # No GFA path means no genotypes
                 vcf_filename=vcf_path,
                 chr_name='chr1',
+                logger=logging.getLogger('pantree'),
                 exclude_terminus=True
             )
             
