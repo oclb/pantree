@@ -6,7 +6,7 @@ across different haplotypes with priority-based updates.
 import unittest
 import os
 from graph_var.graph import PangenomeGraph
-from graph_var.utils import read_gfa_line_by_line, GFAWalkLine
+from graph_var.gfa import read_gfa_line_by_line, GFAWalkLine
 
 
 class TestHaplotypePositions(unittest.TestCase):
