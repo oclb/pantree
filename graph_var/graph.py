@@ -3,17 +3,13 @@ from math import inf
 import networkx as nx
 import numpy as np
 from .utils import (
-    read_gfa,
-    read_gfa_line_by_line,
     node_complement,
     edge_complement,
     sequence_complement,
     walk_complement,
-    GFAWalkLine,
-    GFANodeLine,
-    GFAEdgeLine,
     node_recover,
 )
+from .gfa import read_gfa_line_by_line, GFAWalkLine
 from .logging import setup_logger
 import logging
 from .search_tree import assign_node_directions, dfs_methods
