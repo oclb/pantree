@@ -32,7 +32,7 @@ def _flip(s):
     else:
         raise ValueError()
 
-def _node_recover(node_id):
+def node_recover(node_id):
     if len(node_id.split('_')) == 2:
         node, direction = node_id.split('_')
     else:
@@ -303,17 +303,3 @@ def nearly_identical_alleles(allele1: str, allele2: str, threshold: int = 10):
             idx2 += 1
         
     return True
-
-def log_action(log_path: str, action: str):
-    # Get timestamp
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-    # Measure memory in MB
-    memory_mb = psutil.Process().memory_info().rss / 1024 / 1024
-
-    # Build the header string
-    log_entry = f"{timestamp},{memory_mb:.2f} MB,{action}\n"
-
-    # Append to the end of the log file
-    with open(log_path, "a") as log_file:
-        log_file.write(log_entry)

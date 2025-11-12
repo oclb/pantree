@@ -11,8 +11,9 @@ import click
 @click.argument("vcf_file")
 @click.option("--chr-id", default="chr0")
 @click.option("--ref-name", default="GRCh38")
-@click.option("--no-genotypes", "--no-genotypes", is_flag=True)
-def main(gfa_file, vcf_file, chr_id, ref_name, no_genotypes):
+@click.option("--no-genotypes", is_flag=True)
+@click.option("--verbose", "-v", is_flag=True, help="Enable verbose logging to console")
+def main(gfa_file, vcf_file, chr_id, ref_name, no_genotypes, verbose):
     
     # Check if input file exists
     if not os.path.exists(gfa_file):
@@ -20,10 +21,10 @@ def main(gfa_file, vcf_file, chr_id, ref_name, no_genotypes):
         sys.exit(1)
     
     # Load the graph
-    print(f"Loading GFA file: {gfa_file}")
     G = PangenomeGraph.from_gfa_line_by_line(
         gfa_file,
-        ref_name=ref_name
+        ref_name=ref_name,
+        verbose=verbose
     )
     
     # Generate VCF

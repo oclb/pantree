@@ -31,10 +31,9 @@ class Genotype:
         max_pos = -inf
         for e in zip(walk[:-1], walk[1:]):
             if not graph.has_edge(*e):
-                raise ValueError(f"Specified list contains edge {e} which is not present in the graph")
-
-            if not graph.edges[e]['is_representative']:
-                e = edge_complement(e)
+                msg = f"Specified list contains edge {e} which is not present in the graph"
+                graph.logger.error(msg)
+                raise ValueError(msg)
 
             if not graph.is_terminal(e[0]) and min(*graph.position(e)) < min_pos:
                 min_pos = min(*graph.position(e))
@@ -43,8 +42,10 @@ class Genotype:
 
             if graph.edges[e]['is_in_tree']:
                 count_ref[e] = count_ref.get(e, 0) + 1
+                count_ref[edge_complement(e)] = count_ref.get(edge_complement(e), 0) + 1
             else:
                 count_alt[e] = count_alt.get(e, 0) + 1
+                count_alt[edge_complement(e)] = count_alt.get(edge_complement(e), 0) + 1
 
         return cls(count_ref, count_alt, [(min_pos, max_pos)], exclude_terminus)
 
