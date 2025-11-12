@@ -9,6 +9,7 @@ from .utils import (
     edge_complement,
     nearly_identical_alleles,
     node_recover,
+    get_from_biedge_dict,
 )
 
 if TYPE_CHECKING:
@@ -74,8 +75,8 @@ class _VariantData:
         for genotypes in sample_to_genotype.values():
             for genotype in genotypes:
                 # Get counts for this haplotype
-                cr = genotype.ref_counts.get(reference_edge, 0)
-                ca = genotype.alt_counts.get(variant_edge, 0)
+                cr = get_from_biedge_dict(genotype.ref_counts, reference_edge, 0)
+                ca = get_from_biedge_dict(genotype.alt_counts, variant_edge, 0)
                 ref_count += cr
                 alt_count += ca
         

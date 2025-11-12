@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from math import inf
 import numpy as np
-from .utils import edge_complement
+from .utils import edge_complement, get_from_biedge_dict
 
 @dataclass
 class Genotype:
@@ -35,17 +35,14 @@ class Genotype:
                 graph.logger.error(msg)
                 raise ValueError(msg)
 
-            if not graph.is_terminal(e[0]) and min(*graph.position(e)) < min_pos:
-                min_pos = min(*graph.position(e))
-            if not graph.is_terminal(e[1]) and max(*graph.right_position(e)) > max_pos:
-                max_pos = max(*graph.right_position(e))
+            if not graph.is_terminal(e[0]):
+                min_pos = min(min_pos, graph.position(e[0]))
+                max_pos = max(max_pos, graph.right_position(e[0]))
 
             if graph.edges[e]['is_in_tree']:
                 count_ref[e] = count_ref.get(e, 0) + 1
-                count_ref[edge_complement(e)] = count_ref.get(edge_complement(e), 0) + 1
             else:
                 count_alt[e] = count_alt.get(e, 0) + 1
-                count_alt[edge_complement(e)] = count_alt.get(edge_complement(e), 0) + 1
 
         return cls(count_ref, count_alt, [(min_pos, max_pos)], exclude_terminus)
 
@@ -84,8 +81,8 @@ class Genotype:
         For variant edge e, returns (GT, CR, CA) where GT is the genotype, 
         CR is the reference allele count, and CA is the alternative allele count.
         """
-        cr = self.ref_counts.get(reference_edge, 0)
-        ca = self.alt_counts.get(variant_edge, 0)
+        cr = get_from_biedge_dict(self.ref_counts, reference_edge, 0)
+        ca = get_from_biedge_dict(self.alt_counts, variant_edge, 0)
         gt = None if variant_edge in self.missing_variants else int(ca > 0)
         if cr + ca > 0:
             assert gt is not None, "A missing genotype should have allele counts of 0"

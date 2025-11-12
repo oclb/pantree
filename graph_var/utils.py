@@ -1,5 +1,6 @@
 import gzip
 import pickle
+import functools
 
 def sequence_complement(s: str) -> str:
     def _base_complement(letter: str) -> str:
@@ -8,15 +9,18 @@ def sequence_complement(s: str) -> str:
 
     return ''.join(_base_complement(c) for c in reversed(s))
 
+@functools.lru_cache(maxsize=None)
 def node_complement(s: str):
     return s[:-1] + _flip(s[-1])
 
+@functools.lru_cache(maxsize=None)
 def edge_complement(e: tuple[str, str]):
     return node_complement(e[1]), node_complement(e[0])
 
 def walk_complement(w: list[str]) -> list[str]:
     return [node_complement(v) for v in w[::-1]]
 
+@functools.lru_cache(maxsize=None)
 def _flip(s):
     if s == '+':
         return '-'
@@ -104,3 +108,8 @@ def nearly_identical_alleles(allele1: str, allele2: str, threshold: int = 10):
             idx2 += 1
         
     return True
+
+def get_from_biedge_dict(biedge_dict: dict, edge: tuple[str, str], default: any) -> any:
+    if edge in biedge_dict:
+        return biedge_dict[edge]
+    return biedge_dict.get(edge_complement(edge), default)

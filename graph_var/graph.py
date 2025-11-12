@@ -21,6 +21,7 @@ from collections import defaultdict
 from tqdm import tqdm
 from typing import Any, Optional, Callable
 import warnings
+from functools import lru_cache
 
 class PangenomeGraph(nx.DiGraph):
     reference_tree: nx.classes.digraph.DiGraph
@@ -92,6 +93,7 @@ class PangenomeGraph(nx.DiGraph):
             return None
         return next(self.reference_tree.predecessors(node))
 
+    @lru_cache(maxsize=None)
     def position(self, node_or_edge: Any) -> Any:
         if isinstance(node_or_edge, str):
             return self.nodes[node_or_edge]['position']
