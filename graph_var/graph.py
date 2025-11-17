@@ -751,7 +751,7 @@ class PangenomeGraph(nx.DiGraph):
                 new_sinks.append(node_complement(v))
 
             for w in new_sources:
-                sources[w] = sources.get(w, 0) + 1
+                sources[w] = sources.get(w, 0) + visit_count
 
             sinks += visit_count * new_sinks
 
