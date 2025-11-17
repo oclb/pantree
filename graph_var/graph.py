@@ -814,9 +814,6 @@ class PangenomeGraph(nx.DiGraph):
         Computes the position of each binode along the linear reference path, as well as the tree position
         (distance from reference plus the position of the node's ancestor on the reference path), in basepairs.
         """
-        for node in self.reference_tree.nodes():
-            self.nodes[node]['tree_position'] = inf  # contigs not reachable from reference are at distance infinity
-
         current_position = 0
         for u in self.reference_path:
             current_position += len(self.nodes[u]['sequence'])
@@ -825,12 +822,11 @@ class PangenomeGraph(nx.DiGraph):
             self.nodes[node_complement(u)]['position'] = current_position
             self.nodes[node_complement(u)]['tree_position'] = current_position
 
-        order = list(nx.topological_sort(self.reference_tree))
-        for u in order[1:]: # skip the root
+        for u in nx.topological_sort(self.reference_tree):
             if self.nodes[u]['on_reference_path']:
                 continue
-
             predecessor = self.parent_in_tree(u)
+            assert predecessor is not None
             self.nodes[u]['position'] = self.nodes[predecessor]['position']
             self.nodes[node_complement(u)]['position'] = self.nodes[u]['position']
 
