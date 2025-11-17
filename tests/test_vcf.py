@@ -24,7 +24,7 @@ class TestVCFMetadata(unittest.TestCase):
         
         # Check that we have the expected INFO fields
         field_ids = [field.id for field in info_fields]
-        expected_fields = ['NR', 'VT', 'DR', 'RC', 'AC', 'AN', 'HP', 'TR_MOTIF', 'NIA']
+        expected_fields = ['NR', 'VT', 'TP', 'RC', 'AC', 'AN', 'HP', 'TR_MOTIF', 'NIA']
         
         for expected_id in expected_fields:
             self.assertIn(expected_id, field_ids, f"Missing INFO field: {expected_id}")

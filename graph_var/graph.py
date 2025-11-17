@@ -64,7 +64,7 @@ class PangenomeGraph(nx.DiGraph):
 
     @property
     def node_attribute_names(self) -> tuple:
-        return 'direction', 'sequence', 'position', 'right_position', 'distance_from_reference', 'on_reference_path'
+        return 'direction', 'sequence', 'position', 'right_position', 'tree_position', 'on_reference_path'
 
     @property
     def vcf_attribute_names(self) -> tuple:
@@ -811,19 +811,19 @@ class PangenomeGraph(nx.DiGraph):
 
     def compute_binode_positions(self):
         """
-        Computes the position of each binode along the linear reference path, as well as the distance from the linear
-        reference, in basepairs.
+        Computes the position of each binode along the linear reference path, as well as the tree position
+        (distance from reference plus the position of the node's ancestor on the reference path), in basepairs.
         """
         for node in self.reference_tree.nodes():
-            self.nodes[node]['distance_from_reference'] = inf  # contigs not reachable from reference are at distance infinity
+            self.nodes[node]['tree_position'] = inf  # contigs not reachable from reference are at distance infinity
 
         current_position = 0
         for u in self.reference_path:
             current_position += len(self.nodes[u]['sequence'])
             self.nodes[u]['position'] = current_position
-            self.nodes[u]['distance_from_reference'] = 0
+            self.nodes[u]['tree_position'] = current_position
             self.nodes[node_complement(u)]['position'] = current_position
-            self.nodes[node_complement(u)]['distance_from_reference'] = 0
+            self.nodes[node_complement(u)]['tree_position'] = current_position
 
         order = list(nx.topological_sort(self.reference_tree))
         for u in order[1:]: # skip the root
@@ -834,9 +834,9 @@ class PangenomeGraph(nx.DiGraph):
             self.nodes[u]['position'] = self.nodes[predecessor]['position']
             self.nodes[node_complement(u)]['position'] = self.nodes[u]['position']
 
-            self.nodes[u]['distance_from_reference'] = (self.nodes[predecessor]['distance_from_reference'] +
-                                                        len(self.nodes[u]['sequence']))
-            self.nodes[node_complement(u)]['distance_from_reference'] = self.nodes[u]['distance_from_reference']
+            self.nodes[u]['tree_position'] = (self.nodes[predecessor]['tree_position'] +
+                                              len(self.nodes[u]['sequence']))
+            self.nodes[node_complement(u)]['tree_position'] = self.nodes[u]['tree_position']
 
     def compute_binode_right_positions(self):
         """Computes the right position of each binode, defined as the minimum position of its successors in the 

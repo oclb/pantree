@@ -341,11 +341,10 @@ def _get_default_info_fields() -> list[_InfoField]:
 
     info_fields.append(_InfoField("VT", "1", "String", "Variant type", _eval_variant_type))
 
-    def _eval_distance_from_reference(variant_info: _VariantData) -> str:
-        dr_u = int(variant_info.node_u_data["distance_from_reference"])
-        dr_v = int(variant_info.node_v_data["distance_from_reference"])
-        return f"{dr_u},{dr_v}"
-    info_fields.append(_InfoField("DR", "2", "Integer", "Distance from reference (variant edge's two nodes)", _eval_distance_from_reference))
+    def _eval_tree_position(variant_info: _VariantData) -> str:
+        tp = variant_info.get_variant_position("tree_position")
+        return '.' if tp is None else str(tp)
+    info_fields.append(_InfoField("TP", "1", "Integer", "Tree position of the variant edge's branch point", _eval_tree_position))
 
     def _eval_ref_allele_count(variant_info: _VariantData) -> str:
         # Check if this is an inversion

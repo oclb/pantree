@@ -25,13 +25,13 @@ class TestPositionAndDistance(unittest.TestCase):
             self.assertIn('position', self.G.nodes[node])
             self.assertIsInstance(self.G.nodes[node]['position'], (int, float))
     
-    def test_nodes_have_distance_from_reference(self):
-        """Test that nodes have distance_from_reference attributes"""
+    def test_nodes_have_tree_position(self):
+        """Test that nodes have tree_position attributes"""
         for node in self.G.nodes():
             if self.G.is_terminal(node):
                 continue
-            self.assertIn('distance_from_reference', self.G.nodes[node])
-            self.assertIsInstance(self.G.nodes[node]['distance_from_reference'], (int, float))
+            self.assertIn('tree_position', self.G.nodes[node])
+            self.assertIsInstance(self.G.nodes[node]['tree_position'], (int, float))
     
     @unittest.skip("get_vcf_position method removed - now in vcf.py")
     def test_get_vcf_position(self):
