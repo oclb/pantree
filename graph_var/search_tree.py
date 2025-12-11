@@ -52,15 +52,18 @@ def assign_node_directions(G: nx.DiGraph,
     """
 
     G_undirected = G.to_undirected(as_view=True)
-    visited = set()
+    unvisited = set(G.nodes())
     stack = []
 
     def visit_node(parent, current_node, current_direction):
 
+        if current_node not in unvisited:
+            return
+
         # visit current_node
-        visited.add(current_node)
+        unvisited.remove(current_node)
         G.nodes[current_node]['direction'] = current_direction
-        visited.add(node_complement(current_node))
+        unvisited.remove(node_complement(current_node))
         G.nodes[node_complement(current_node)]['direction'] = -current_direction
         if parent is not None:
             assert G_undirected.has_edge(parent, current_node)
@@ -70,8 +73,6 @@ def assign_node_directions(G: nx.DiGraph,
 
         # Last-added edges will be visited first
         for u, neighbor, _ in neighbors:
-            if neighbor in visited or node_complement(neighbor) in visited:
-                continue
             stack.append((current_node, neighbor, current_direction))
 
     # Initialize the search at the linear reference path so that these nodes all have the same orientation
@@ -85,15 +86,12 @@ def assign_node_directions(G: nx.DiGraph,
     while True:
         while stack:
             parent, current_node, current_direction = stack.pop()
-            if current_node not in visited:
-                visit_node(parent, current_node, current_direction)
-        
+            visit_node(parent, current_node, current_direction)
+
         # Ensure that all connected components are visited
-        num_unvisited = G.number_of_nodes() - len(visited)
+        num_unvisited = len(unvisited)
         if num_unvisited == 0:
             break
         print(f'Visiting another connected component, with at least {num_unvisited} nodes')
-        unvisited_node = set(G.nodes).difference(visited).pop()
+        unvisited_node = unvisited.pop()
         visit_node(None, unvisited_node, 1)
-
-
