@@ -4,8 +4,8 @@ Unit tests for VCF writing functionality including edge cases
 import unittest
 import os
 import tempfile
-from graph_var.graph import PangenomeGraph
-from graph_var.genotype import Genotype
+from pantree.graph import PangenomeGraph
+from pantree.genotype import Genotype
 
 
 class TestVCFWriting(unittest.TestCase):

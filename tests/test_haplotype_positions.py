@@ -5,8 +5,8 @@ across different haplotypes with priority-based updates.
 """
 import unittest
 import os
-from graph_var.graph import PangenomeGraph
-from graph_var.gfa import read_gfa_line_by_line, GFAWalkLine
+from pantree.graph import PangenomeGraph
+from pantree.gfa import read_gfa_line_by_line, GFAWalkLine
 
 
 class TestHaplotypePositions(unittest.TestCase):
@@ -119,7 +119,7 @@ class TestHaplotypePositions(unittest.TestCase):
     
     def test_complementary_nodes_have_same_position(self):
         """Test that complementary nodes have the same haplotype position data"""
-        from graph_var.utils import node_complement
+        from pantree.utils import node_complement
         
         for node, node_data in self.G.nodes.items():
             # Skip terminus nodes

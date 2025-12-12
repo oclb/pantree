@@ -4,8 +4,8 @@ Unit tests for pickle save/load functions.
 import unittest
 import os
 import tempfile
-from graph_var.utils import save_graph_to_pkl, load_graph_from_pkl
-from graph_var.graph import PangenomeGraph
+from pantree.utils import save_graph_to_pkl, load_graph_from_pkl
+from pantree.graph import PangenomeGraph
 
 
 class TestPickleFunctions(unittest.TestCase):

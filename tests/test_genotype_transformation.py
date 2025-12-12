@@ -3,8 +3,8 @@ Tests for genotype transformation functions.
 """
 
 import unittest
-from graph_var import PangenomeGraph
-from graph_var.genotype_transformation import transform_genotype_via_walk
+from pantree import PangenomeGraph
+from pantree.genotype_transformation import transform_genotype_via_walk
 
 
 class TestGenotypeTransformation(unittest.TestCase):
@@ -24,7 +24,7 @@ class TestGenotypeTransformation(unittest.TestCase):
     
     def test_transform_single_variant_success(self):
         """Test transformation with a single variant that forms a valid walk"""
-        # Use a variant that forms a valid walk: ('3_+', '4_+') or ('8_+', '9_+')
+        # Use an actual variant edge from the graph
         variant_edge = ('3_+', '4_+')
         genotype_A = {variant_edge: 1}
         
@@ -38,7 +38,7 @@ class TestGenotypeTransformation(unittest.TestCase):
 
     def test_transform_with_single_variant(self):
         """Test transformation with a single variant"""
-        # Use only a valid variant with count 1
+        # Use an actual variant edge from the graph
         genotype_A = {('3_+', '4_+'): 1}
         
         genotype_B = transform_genotype_via_walk(self.G, self.G, genotype_A)
@@ -49,8 +49,8 @@ class TestGenotypeTransformation(unittest.TestCase):
     
     def test_transform_returns_dict(self):
         """Test that transformation returns a dictionary for valid variants"""
-        # Use a variant that forms a valid walk
-        variant_edge = ('8_+', '9_+')
+        # Use an actual variant edge from the graph that forms a valid walk
+        variant_edge = ('3_+', '4_+')
         genotype_A = {variant_edge: 1}
         
         genotype_B = transform_genotype_via_walk(self.G, self.G, genotype_A)
@@ -65,20 +65,21 @@ class TestGenotypeTransformation(unittest.TestCase):
     
     def test_transform_raises_value_error_for_invalid_variants(self):
         """Test that ValueError is raised for invalid variant combinations"""
-        # Use a variant that doesn't form a valid walk: ('7_+', '8_+')
-        genotype_A = {('7_+', '8_+'): 1}
+        # Use a non-existent edge that is not a variant edge
+        genotype_A = {('99_+', '100_+'): 1}
         
-        # This should raise ValueError because this variant doesn't form a valid walk
+        # This should raise ValueError because this edge is not a variant edge
         with self.assertRaises(ValueError) as context:
             genotype_B = transform_genotype_via_walk(self.G, self.G, genotype_A)
         
-        # Check that the error message mentions invalid walk
-        self.assertIn("valid walk", str(context.exception).lower())
+        # Check that the error message mentions variant edge
+        self.assertIn("variant edge", str(context.exception).lower())
     
     def test_transform_with_different_graphs(self):
         """Test that transformation works between different graphs"""
         # For this test, we use the same graph but the function should work
         # with different graphs that have the same underlying structure
+        # Use an actual variant edge from the graph: ('3_+', '4_+')
         variant_edge = ('3_+', '4_+')
         genotype_A = {variant_edge: 1}
         

@@ -4,9 +4,9 @@ Unit tests for VCF writing functionality
 import unittest
 import os
 import tempfile
-from graph_var.graph import PangenomeGraph
-from graph_var.genotype import Genotype
-from graph_var.vcf import (
+from pantree.graph import PangenomeGraph
+from pantree.genotype import Genotype
+from pantree.vcf import (
     _build_genotype_record,
     _VariantRecord,
     _VariantData,

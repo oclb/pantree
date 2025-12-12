@@ -3,8 +3,8 @@
 Test script to verify haplotype position information is added to VCF INFO field
 """
 import networkx as nx
-from graph_var.graph import PangenomeGraph
-from graph_var.utils import node_complement
+from pantree.graph import PangenomeGraph
+from pantree.utils import node_complement
 import tempfile
 import os
 

@@ -3,8 +3,8 @@
 Run the complete pipeline on a GFA file using haplo_contiguous_dfs_tree method
 """
 import os
-from graph_var.graph import PangenomeGraph
-from graph_var.utils import read_gfa_line_by_line, GFAWalkLine
+from pantree.graph import PangenomeGraph
+from pantree.gfa import read_gfa_line_by_line, GFAWalkLine
 
 # Input GFA file
 gfa_file = "/Users/psalehin/Library/CloudStorage/Dropbox/calling_data/Chr20_small/GFA/chr20_v2_subset_2_check.gfa"

@@ -1,5 +1,5 @@
 import polars as pl
-from graph_var.read_vcf import read_vcf_to_lazyframe
+from pantree.read_vcf import read_vcf_to_lazyframe
 
 
 def test_read_vcf_to_lazyframe():

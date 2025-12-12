@@ -1,4 +1,4 @@
-from graph_var.cli import main
+from pantree.cli import main
 from click.testing import CliRunner
 import os
 import tempfile

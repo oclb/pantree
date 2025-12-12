@@ -4,13 +4,13 @@ Extended unit tests for utils module
 import unittest
 import os
 import tempfile
-from graph_var.utils import (
+from pantree.utils import (
     sequence_complement,
     node_complement,
     edge_complement,
     walk_complement,
 )
-from graph_var.gfa import read_gfa_line_by_line, GFANodeLine, GFAEdgeLine, GFAWalkLine
+from pantree.gfa import read_gfa_line_by_line, GFANodeLine, GFAEdgeLine, GFAWalkLine
 
 
 class TestSequenceOperations(unittest.TestCase):

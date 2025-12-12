@@ -3,8 +3,8 @@
 Test script for the new haplotype_position function
 """
 import networkx as nx
-from graph_var.graph import PangenomeGraph
-from graph_var.utils import node_complement
+from pantree.graph import PangenomeGraph
+from pantree.utils import node_complement
 
 def test_haplotype_position():
     """Test the haplotype_position function"""

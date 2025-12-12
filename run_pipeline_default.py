@@ -3,7 +3,7 @@
 Run the complete pipeline on a GFA file using default max_weight method
 """
 import os
-from graph_var.graph import PangenomeGraph
+from pantree.graph import PangenomeGraph
 
 # Input GFA file
 gfa_file = "/Users/psalehin/Library/CloudStorage/Dropbox/calling_data/Chr20_small/GFA/chr20_v2_subset_2_check.gfa"

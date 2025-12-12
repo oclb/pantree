@@ -3,8 +3,8 @@
 Test script for the haplotype_position function with root edge case
 """
 import networkx as nx
-from graph_var.graph import PangenomeGraph
-from graph_var.utils import node_complement
+from pantree.graph import PangenomeGraph
+from pantree.utils import node_complement
 
 def test_haplotype_position_root_case():
     """Test the haplotype_position function when branch point is the root"""

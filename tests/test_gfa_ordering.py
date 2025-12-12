@@ -6,7 +6,7 @@ before edges are added to the graph.
 
 import unittest
 import os
-from graph_var import PangenomeGraph
+from pantree import PangenomeGraph
 
 
 class TestGFAOrdering(unittest.TestCase):

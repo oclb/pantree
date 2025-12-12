@@ -58,8 +58,8 @@ pantree input.gfa output.vcf \
 
 ## Python API Usage
 ```python
-from graph_var import PangenomeGraph, Genotype
-from graph_var.logging import setup_logger
+from pantree import PangenomeGraph, Genotype
+from pantree.logger import setup_logger
 
 gfa_path = "/path/to/graph.gfa"
 
@@ -77,7 +77,7 @@ walks: list[list[str]]
 G, walks = PangenomeGraph.from_gfa(gfa_path, return_walks=True)
 
 # Get the genotype of some walk
-genotype: Genotype = G.genotype(walks[0])
+genotype: Genotype = Genotype.genotype(G, walks[0], exclude_terminus=True)
 
 # Generate VCF file with genotypes
 vcf_path = "/path/to/output.vcf"

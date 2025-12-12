@@ -6,7 +6,7 @@ This tests that pantree can handle both GFA1.0 and GFA1.1 formats.
 import unittest
 import os
 import tempfile
-from graph_var import PangenomeGraph
+from pantree import PangenomeGraph
 
 
 class TestGFA10Support(unittest.TestCase):
