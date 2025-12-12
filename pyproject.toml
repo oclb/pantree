@@ -21,15 +21,15 @@ dependencies = [
 ]
 
 [project.scripts]
-pantree = "graph_var.cli:main"
-graph_var = "graph_var.cli:main"
+pantree = "pantree.cli:main"
+graph_var = "pantree.cli:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["graph_var"]
+packages = ["pantree"]
 
 [tool.hatch.metadata]
 allow-direct-references = true
@@ -41,14 +41,14 @@ python_classes = ["Test*"]
 python_functions = ["test_*"]
 addopts = [
     "--verbose",
-    "--cov=graph_var",
+    "--cov=pantree",
     "--cov-report=term-missing",
     "--cov-report=html",
     "--cov-report=xml",
 ]
 
 [tool.coverage.run]
-source = ["graph_var"]
+source = ["pantree"]
 omit = [
     "*/tests/*",
     "*/test_*.py",
@@ -65,3 +65,6 @@ exclude_lines = [
     "class .*\\bProtocol\\):",
     "@(abc\\.)?abstractmethod",
 ]
+
+[tool.pyright]
+typeCheckingMode = "standard"  # or "strict"

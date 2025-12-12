@@ -3,7 +3,7 @@ from .utils import node_complement
 import operator
 
 # TODO de-duplicate logic between DFS functions
-# TODO add edge-weight priority as tiebreaker 
+# TODO add edge-weight priority as tiebreaker
 # TODO turn haplo_labels list into dict with value = priority, allowing ties
 # TODO add new positions to VCF
 
@@ -48,7 +48,7 @@ def max_weight_dfs_tree(G: nx.DiGraph,
     return dfs_tree
 
 def assign_node_directions(G: nx.DiGraph,
-                        reference_path: list, **kwargs) -> None:
+                        reference_path: list) -> None:
     """
     Perform a depth-first search (DFS) prioritizing higher weight edges and return a DFS tree.
 
@@ -58,15 +58,18 @@ def assign_node_directions(G: nx.DiGraph,
     """
 
     G_undirected = G.to_undirected(as_view=True)
-    visited = set()
+    unvisited = set(G.nodes())
     stack = []
 
     def visit_node(parent, current_node, current_direction):
 
+        if current_node not in unvisited:
+            return
+
         # visit current_node
-        visited.add(current_node)
+        unvisited.remove(current_node)
         G.nodes[current_node]['direction'] = current_direction
-        visited.add(node_complement(current_node))
+        unvisited.remove(node_complement(current_node))
         G.nodes[node_complement(current_node)]['direction'] = -current_direction
         if parent is not None:
             assert G_undirected.has_edge(parent, current_node)
@@ -76,8 +79,6 @@ def assign_node_directions(G: nx.DiGraph,
 
         # Last-added edges will be visited first
         for u, neighbor, _ in neighbors:
-            if neighbor in visited or node_complement(neighbor) in visited:
-                continue
             stack.append((current_node, neighbor, current_direction))
 
     # Initialize the search at the linear reference path so that these nodes all have the same orientation
@@ -91,36 +92,35 @@ def assign_node_directions(G: nx.DiGraph,
     while True:
         while stack:
             parent, current_node, current_direction = stack.pop()
-            if current_node not in visited:
-                visit_node(parent, current_node, current_direction)
-        
+            visit_node(parent, current_node, current_direction)
+
         # Ensure that all connected components are visited
-        num_unvisited = G.number_of_nodes() - len(visited)
+        num_unvisited = len(unvisited)
         if num_unvisited == 0:
             break
-        print(f'Visiting another connected component, with at least {num_unvisited} nodes')
-        unvisited_node = set(G.nodes).difference(visited).pop()
+        print(f'Visiting another connected component, with at most {num_unvisited} nodes')
+        unvisited_node = unvisited.pop()
         visit_node(None, unvisited_node, 1)
 
 
 def haplo_contiguous_dfs_tree(G: nx.DiGraph,
-                        haplo_priorities: dict[str, int],    
+                        haplo_priorities: dict[str, int],
                         reference_path: list) -> nx.DiGraph:
-    
+
     # Sort haplotype labels by priority (lower priority value = higher precedence)
     # Ties are allowed (same priority value)
     # Remove 'other' from haplo_labels since it's not a real haplotype
     haplo_labels_with_other = sorted(haplo_priorities.keys(), key=lambda x: haplo_priorities[x])
     haplo_labels = [h for h in haplo_labels_with_other if h != 'other']
-    
+
     def get_neighbors(G: nx.DiGraph, node: str, haplo_label: str) -> list:
         priority = {}
         for neighbor in G.successors(node):
             edge_data = G.edges[(node, neighbor)]
-            
+
             # Check if edge has any of the priority haplotypes (excluding 'other')
             found_label = None
-            
+
             # First try to continue with current haplotype
             if haplo_label != 'other' and haplo_label in edge_data:
                 found_label = haplo_label
@@ -130,7 +130,7 @@ def haplo_contiguous_dfs_tree(G: nx.DiGraph,
                     if label in edge_data:
                         found_label = label
                         break
-            
+
             # Assign priority based on found label
             if found_label:
                 priority[neighbor] = haplo_labels.index(found_label)
@@ -138,34 +138,34 @@ def haplo_contiguous_dfs_tree(G: nx.DiGraph,
                 # No priority haplotype found - this is an 'other' edge
                 # Assign lowest priority (after all priority haplotypes)
                 priority[neighbor] = len(haplo_labels)
-            
+
         neighbors = sorted(priority.keys(), key=lambda x: priority[x], reverse=True)
         return neighbors
 
     def visit_node(parent, current_node, haplo_label):
         if current_node in visited:
             return
-            
+
         # visit current_node
         visited.add(current_node)
         # Add the node to the tree even if it has no parent
         if current_node not in dfs_tree:
             dfs_tree.add_node(current_node)
-        
+
         if parent is not None:
             assert G.has_edge(parent, current_node)
             dfs_tree.add_edge(parent, current_node)
-            
+
             # Determine which haplotype label this edge belongs to
             edge_data = G.edges[(parent, current_node)]
-            
+
             # Check if edge has any priority haplotype
             found_label = None
             for label in haplo_labels:
                 if label in edge_data:
                     found_label = label
                     break
-            
+
             # If found a priority haplotype, use it; otherwise use 'other'
             haplo_label = found_label if found_label else 'other'
 
@@ -177,7 +177,7 @@ def haplo_contiguous_dfs_tree(G: nx.DiGraph,
             if neighbor not in visited:
                 stack.append((current_node, neighbor, haplo_label))
 
-        
+
     dfs_tree = nx.DiGraph()
     visited = set()
     stack = []

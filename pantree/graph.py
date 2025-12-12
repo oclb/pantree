@@ -12,7 +12,7 @@ from .utils import (
 from .gfa import read_gfa_line_by_line, GFAWalkLine
 from .logger import setup_logger
 import logging
-from .search_tree import assign_node_directions, dfs_methods
+from .dfs import assign_node_directions, dfs_methods
 from .genotype import Genotype
 from .vcf import write_vcf_from_graph
 import os
@@ -28,7 +28,7 @@ class PangenomeGraph(nx.DiGraph):
     reference_path: list[str]
     variant_edges: set
     number_of_biedges: int  # Needed because nx.number_of_edges() runs in O(number of edges)
-    logger: Optional[logging.Logger]
+    logger: logging.Logger
 
     # A valid walk proceeds from either +_terminus_+ to -_terminus_+ or from -_terminus_- to +_terminus_-
     @property
@@ -117,7 +117,7 @@ class PangenomeGraph(nx.DiGraph):
                  logger: Optional[logging.Logger] = None,
                  return_walks: bool = False,
                  dfs_method_name: str = 'max_weight',
-                 priority_dict: dict[str, int] = None,
+                 priority_dict: dict[str, int] | None = None,
                  ):
         """
         Reads a .gfa file into a PangenomeGraph object.
@@ -133,7 +133,7 @@ class PangenomeGraph(nx.DiGraph):
             logger = logging.getLogger('pantree')
             logger.addHandler(logging.NullHandler())
             logger.setLevel(logging.CRITICAL + 1)  # Disable all logging
-        
+
         # Log input parameters
         logger.info(f"Loading GFA file: {gfa_file}")
         logger.info(f"Parameters: ref_name={ref_name}, dfs_method={dfs_method_name}, priority_dict={priority_dict}")
@@ -142,9 +142,9 @@ class PangenomeGraph(nx.DiGraph):
             msg = f"GFA file not found: {gfa_file}"
             logger.error(msg)
             raise FileNotFoundError(msg)
-        
+
         dfs_method = dfs_methods[dfs_method_name]
-        
+
         # Default priority dictionary with 4 priority haplotypes + 'other'
         if priority_dict is None:
             priority_dict = {
@@ -169,28 +169,28 @@ class PangenomeGraph(nx.DiGraph):
         for line in read_gfa_line_by_line(gfa_file, line_types=['L']):
             G.add_biedge(line.u, line.v)
 
-        
+
         walks = []
         for line in read_gfa_line_by_line(gfa_file, line_types=['W', 'P']):
             # Check if haplotype name starts with ref_name (e.g., 'GRCh38#0#chr20' starts with 'GRCh38')
             hit_reference = line.sample_name == ref_name
             if hit_reference:
-                if G.reference_path is not None:
+                if G.reference_path:
                     warnings.warn("Reference path already exists. Skipping additional reference walks.")
                 else:
                     G.add_reference_path(line.walk)
-            
+
             # Extract sample#haplotype from hap_name (format: sample#haplotype#contig)
             if line.sample_name in priority_dict:
                 G.haplo_priorities[line.hap_name] = priority_dict[line.sample_name]
                 G.update_haplotype_positions(line)
-                
+
             if return_walks:
                 walks.append(line.walk)
-            
+
             walk_start_nodes.append(line.walk[0])
             walk_end_nodes.append(line.walk[-1])
-            
+
             G.compute_edge_weights([line.walk])
 
         logger.info(f"Loaded {len(G.nodes) / 2:.0f} binodes, {len(G.edges) / 2:.0f} biedges")
@@ -216,19 +216,19 @@ class PangenomeGraph(nx.DiGraph):
         return cls.from_gfa(*args, **kwargs)
 
     def __init__(self,
-                 directed_graph: nx.classes.digraph.DiGraph = None,
-                 reference_tree: nx.classes.digraph.DiGraph = None,
-                 reference_path: list[str] = None,
-                 variant_edges: set = None,
-                 haplo_priorities: dict[str, int] = None,
-                 logger: Optional[logging.Logger] = None
+                 directed_graph: nx.classes.digraph.DiGraph | None = None,
+                 reference_tree: nx.classes.digraph.DiGraph | None = None,
+                 reference_path: list[str] | None = None,
+                 variant_edges: set | None = None,
+                 haplo_priorities: dict[str, int] | None = None,
+                 logger: logging.Logger | None = None
                  ):
         if directed_graph is None:
             directed_graph = nx.DiGraph()
         if reference_tree is None:
             reference_tree = nx.DiGraph()
         super().__init__(directed_graph)
-        self.reference_path = reference_path
+        self.reference_path = reference_path if reference_path is not None else []
         self.variant_edges = variant_edges if variant_edges is not None else set()
         self.haplo_priorities = haplo_priorities if haplo_priorities is not None else {}
         self.logger = logger if logger is not None else logging.getLogger('pantree')
@@ -238,8 +238,8 @@ class PangenomeGraph(nx.DiGraph):
 
     def identify_variant_type(self,
                               edge: tuple[str, str],
-                              ref: str = None,
-                              alt: str = None,
+                              ref: str | None = None,
+                              alt: str | None = None,
                               ) -> str:
         var_type = None
         if self.is_inversion(edge):
@@ -270,6 +270,8 @@ class PangenomeGraph(nx.DiGraph):
             if var_type is not None:
                 raise KeyError(f'Variant, {edge}, has dual type.')
             var_type = 'DEL'
+        assert var_type is not None
+
         return var_type
 
     def is_inversion(self, edge: tuple[str, str]) -> bool:
@@ -306,8 +308,8 @@ class PangenomeGraph(nx.DiGraph):
 
     def is_insertion(self,
                      edge: tuple[str, str],
-                     ref: str = None,
-                     alt: str = None,
+                     ref: str | None = None,
+                     alt: str | None = None,
                      ) -> bool:
         if not self.is_crossing_edge(edge):
             return False
@@ -317,8 +319,8 @@ class PangenomeGraph(nx.DiGraph):
 
     def is_replacement(self,
                        edge: tuple[str, str],
-                       ref: str = None,
-                       alt: str = None,
+                       ref: str | None = None,
+                       alt: str | None = None,
                        ) -> bool:
         if not self.is_crossing_edge(edge):
             return False
@@ -328,8 +330,8 @@ class PangenomeGraph(nx.DiGraph):
 
     def is_snp(self,
                edge: tuple[str, str],
-               ref: str = None,
-               alt: str = None,
+               ref: str | None = None,
+               alt: str | None = None,
                ) -> bool:
         if not self.is_crossing_edge(edge):
             return False
@@ -339,8 +341,8 @@ class PangenomeGraph(nx.DiGraph):
 
     def is_mnp(self,
                edge: tuple[str, str],
-               ref: str = None,
-               alt: str = None,
+               ref: str | None = None,
+               alt: str | None = None,
                ) -> bool:
         if not self.is_crossing_edge(edge):
             return False
@@ -393,7 +395,7 @@ class PangenomeGraph(nx.DiGraph):
 
         if self.reference_path == []:
             self.add_biedge(plus_terminus + '_+', minus_terminus + '_+')
-        
+
         # reference path is assumed to be in the positive direction
         self.reference_path = [plus_terminus + '_+'] + self.reference_path + [minus_terminus + '_+']
         self.nodes[plus_terminus + '_+']['on_reference_path'] = 1
@@ -472,7 +474,7 @@ class PangenomeGraph(nx.DiGraph):
 
     def genotypes_from_gfa(self, gfa_path: str, exclude_terminus: bool=True) -> dict[str, tuple[Genotype]]:
         """
-        Compute the phased genotype data for each sample in a GFA file. There can be 1 or 2 haplotypes 
+        Compute the phased genotype data for each sample in a GFA file. There can be 1 or 2 haplotypes
         per sample, which are stored in a tuple. There can be any positive number of walks per haplotype,
         which are aggregated together.
         """
@@ -483,7 +485,7 @@ class PangenomeGraph(nx.DiGraph):
             walk = line.walk
             haplotype_name = '#'.join(line.hap_name.split('#')[:2])
             names[line.sample_name].add(haplotype_name)
-            genotype = self.genotype(walk, exclude_terminus)
+            genotype: Genotype = self.genotype(walk, exclude_terminus)
             if haplotype_name in genotype_dict:
                 genotype_dict[haplotype_name].update(genotype)
             else:
@@ -492,7 +494,7 @@ class PangenomeGraph(nx.DiGraph):
         for _, genotype in genotype_dict.items():
             genotype.compute_missing_variants(self)
 
-        result = {}        
+        result = {}
         for sample_name, haplo_names in names.items():
             assert len(haplo_names) in (1,2), "Samples should be haploid or diploid"
             result[sample_name] = tuple(genotype_dict[name] for name in haplo_names)
@@ -550,14 +552,14 @@ class PangenomeGraph(nx.DiGraph):
 
     def positive_variant_edge(self, edge: tuple):
         return edge if self.direction(edge[0]) == 1 or self.is_inversion(edge) else edge_complement(edge)
-        
+
     def update_haplotype_positions(self, line: GFAWalkLine) -> None:
         """
         For each edge (u->v) in the walks, store:
         primary_edge_pos = ((hap_id, contig_name, walk_id), position_bp)
         Keep only the tuple from the highest-priority hap (smaller hap_rank wins).
         position_bp is the cumulative bp offset at the START of (u->v) within that walk.
-        """ 
+        """
 
         walk = line.walk
         hap_name = line.hap_name
@@ -692,33 +694,6 @@ class PangenomeGraph(nx.DiGraph):
 
         return ref_allele, alt_allele, last_letter_of_branch_point, branch_point
 
-    def genotype_and_linear_coverage_by_sample(self, walks) -> tuple[dict, dict, list]: # TODO
-        """
-        Integrates the genotype of each sample from the genotype of each walk.
-        :param walks: list of walks for each sample
-        :return:
-        """
-        cr_dict_haplotype = dict()
-        ca_dict_haplotype = dict()
-        linear_coverages = []
-
-        for walk in walks:
-            cr_ca_dicts, linear_coverage = self.genotype(walk, return_linear_coverage=True)
-            cr_dict_walk, ca_dict_walk = cr_ca_dicts[0], cr_ca_dicts[1]
-            for edge, count in cr_dict_walk.items():
-                if edge in cr_dict_haplotype:
-                    cr_dict_haplotype[edge] += count
-                else:
-                    cr_dict_haplotype[edge] = count
-            for edge, count in ca_dict_walk.items():
-                if edge in ca_dict_haplotype:
-                    ca_dict_haplotype[edge] += count
-                else:
-                    ca_dict_haplotype[edge] = count
-            linear_coverages.append(linear_coverage)
-
-        return cr_dict_haplotype, ca_dict_haplotype, linear_coverages
-
 
     def count_edge_visits(self, genotype: dict) -> dict:
         """
@@ -835,7 +810,7 @@ class PangenomeGraph(nx.DiGraph):
             self.nodes[node_complement(u)]['tree_position'] = self.nodes[u]['tree_position']
 
     def compute_binode_right_positions(self):
-        """Computes the right position of each binode, defined as the minimum position of its successors in the 
+        """Computes the right position of each binode, defined as the minimum position of its successors in the
         positive subgraph minus back edges."""
         positive_subgraph = self.subgraph([n for n, direction in self.nodes(data="direction") if direction == 1])
         positive_subgraph_no_cycle = self.edge_subgraph([edge for edge in positive_subgraph.edges() if not self.is_back_edge(edge)])
@@ -974,7 +949,7 @@ class PangenomeGraph(nx.DiGraph):
             return True
         remaining_sequence = sequence[:putative_match_length]
         return self._match_sequence_up_tree(remaining_sequence, self.parent_in_tree(node))
-        
+
     def _match_sequence_down_tree(self, sequence: str, node: str) -> bool:
         """Returns True if `sequence' is a prefix of some sequence beginning at `node` in
         thre tree."""
@@ -988,7 +963,7 @@ class PangenomeGraph(nx.DiGraph):
         tree_successors = self.reference_tree.successors(node)
         return any([self._match_sequence_down_tree(remaining_sequence, successor) \
             for successor in tree_successors])
-        
+
     def _match_sequence_down_graph(self, sequence: str, node: str, end_node: str) -> bool:
         """Returns True if `sequence' is a prefix of some sequence beginning at `node` in
         the graph."""
@@ -1002,14 +977,14 @@ class PangenomeGraph(nx.DiGraph):
         tree_successors = self.successors(node)
         return any([self._match_sequence_down_graph(remaining_sequence, successor, end_node) \
             for successor in tree_successors])
-        
+
     def annotate_repeat_motif(self,
                               variant_edge: tuple[str, str],
                               ref_allele: str = None,
                               alt_allele: str = None,
                               branch_point: str = None) -> Optional[str]:
         """
-        Returns the repeat motif of a variant edge if it is a repeat. 
+        Returns the repeat motif of a variant edge if it is a repeat.
         Otherwise, returns None.
         """
         import sys
@@ -1045,14 +1020,14 @@ class PangenomeGraph(nx.DiGraph):
                 return motif
             return None
 
-        
+
         if len(alt_allele) == 0:
             return get_repeat_motif(ref_allele)
         if len(ref_allele) == 0:
             return get_repeat_motif(alt_allele)
 
     def missing_inversion_allele(self, variant_edge: tuple[str, str], minimum_alt_length: int=10) -> Optional[str]:
-        """Checks if the alt allele of a variant edge matches the reverse complement of some other path from branch 
+        """Checks if the alt allele of a variant edge matches the reverse complement of some other path from branch
         point to v, whether that be the reference allele or a different alt path. Returns the matching allele
         or None."""
         if not self.is_crossing_edge(variant_edge):
@@ -1070,7 +1045,7 @@ class PangenomeGraph(nx.DiGraph):
             return alt
 
         return None
-        
+
     def simplify_subgraph(self,
                           pos_range: tuple = None,
                           endpoints: set[set] = None,
@@ -1140,7 +1115,7 @@ class PangenomeGraph(nx.DiGraph):
 
         simplified_graph.remove_nodes_from(nodes_to_delete)
 
-    
+
     @staticmethod
     def contract_paths(simplified_graph: nx.DiGraph, end_points: set[str]) -> dict[str, str]:
         """
@@ -1162,7 +1137,7 @@ class PangenomeGraph(nx.DiGraph):
             simplified_graph.nodes[parent]['sequence'] += sequence
             simplified_graph.nodes[node_complement(parent)]['sequence'] = sequence + \
                 simplified_graph.nodes[node_complement(parent)]['sequence']
-            
+
 
         node_in_degrees = {node: degree for node, degree in simplified_graph.in_degree()}
         node_out_degrees = {node: degree for node, degree in simplified_graph.out_degree()}
@@ -1191,25 +1166,3 @@ class PangenomeGraph(nx.DiGraph):
                     node_mapping[combined_node] = parent
 
         return node_mapping
-
-
-        
-            
-        
-
-
-        
-
-
-
-
-
-
-
-
-
-
-
-
-
-

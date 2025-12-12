@@ -1,3 +1,4 @@
+from __future__ import annotations
 from dataclasses import dataclass
 from math import inf
 import numpy as np
@@ -12,7 +13,7 @@ class Genotype:
     missing_variants: set[tuple[str, str]] | None = None
 
     @classmethod
-    def genotype(cls, graph: "PangenomeGraph", walk: list[str], exclude_terminus: bool):
+    def genotype(cls, graph: "PangenomeGraph", walk: list[str], exclude_terminus: bool) -> "Genotype":
         """
         Computes the number of time that a walk visits each variant edge.
         :param graph: PangenomeGraph object
@@ -68,17 +69,17 @@ class Genotype:
         result = []
         for source, sink in zip(source_positions, sink_positions):
             # indices of first and last variant edges u,v s.t. position of u in between source and sink
-            first = np.searchsorted(sorted_variant_positions, source, side='left')
-            last = np.searchsorted(sorted_variant_positions, sink, side='right')
+            first = np.searchsorted(sorted_variant_positions, source + 1, side='left')
+            last = np.searchsorted(sorted_variant_positions, sink - 1, side='right')
             for i in range(first, last):
                 if max(*graph.right_position(sorted_variant_edges[i])) <= sink:
                     result.append(sorted_variant_edges[i])
-        
+
         self.missing_variants = set(result)
 
     def variant_record(self, variant_edge: tuple[str, str], reference_edge: tuple[str, str]) -> tuple[int|None, int, int|None]:
         """
-        For variant edge e, returns (GT, CR, CA) where GT is the genotype, 
+        For variant edge e, returns (GT, CR, CA) where GT is the genotype,
         CR is the reference allele count, and CA is the alternative allele count.
         """
         cr = get_from_biedge_dict(self.ref_counts, reference_edge, 0)
@@ -87,4 +88,3 @@ class Genotype:
         if cr + ca > 0:
             assert gt is not None, "A missing genotype should have allele counts of 0"
         return gt, cr, ca
-        
