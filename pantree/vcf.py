@@ -43,7 +43,7 @@ class _VariantData:
     def needs_prepend(self) -> bool:
         return (len(self.ref_allele_raw) == 0 or len(self.alt_allele_raw) == 0) \
             and self.node_v_data['on_reference_path']
-    
+
     @property
     def is_degenerate(self) -> bool:
         """Check if ref and alt alleles are identical after VCF formatting."""
@@ -54,24 +54,24 @@ class _VariantData:
         if branch_position is None:
             return None
         return branch_position + 1 - int(self.needs_prepend)
-    
+
     @staticmethod
-    def compute_allele_counts(sample_to_genotype: dict, 
+    def compute_allele_counts(sample_to_genotype: dict,
                              variant_edge: tuple[str, str],
                              reference_edge: tuple[str, str]) -> tuple[int, int]:
         """Compute ref and alt allele counts from genotype data.
-        
+
         Args:
             sample_to_genotype: Dict mapping sample names to tuples of Genotype objects
             variant_edge: The variant edge
             reference_edge: The reference edge
-            
+
         Returns:
             Tuple of (ref_count, alt_count)
         """
         ref_count = 0
         alt_count = 0
-        
+
         for genotypes in sample_to_genotype.values():
             for genotype in genotypes:
                 # Get counts for this haplotype
@@ -79,11 +79,11 @@ class _VariantData:
                 ca = get_from_biedge_dict(genotype.alt_counts, variant_edge, 0)
                 ref_count += cr
                 alt_count += ca
-        
+
         return ref_count, alt_count
-    
+
     @classmethod
-    def from_graph(cls, 
+    def from_graph(cls,
                    graph: "PangenomeGraph",
                    edge: tuple[str, str],
                    reference_edge: tuple[str, str],
@@ -92,27 +92,27 @@ class _VariantData:
                    size_threshold: Optional[int] = None,
                    **kwargs) -> "_VariantData":
         """Compute variant information from a graph and variant edge."""
-        
+
         # Get ref/alt alleles and branch point
         ref_allele_raw, alt_allele_raw, _, branch_point = graph.ref_alt_alleles(edge)
-        
+
         # Check if ref allele is on forward reference path
         u, v = edge
         ref_allele_on_forward_reference_path = graph.direction(u) == 1 and graph.on_reference_path(edge)
-        
+
         # Determine if we need to prepend letter to alleles
         prepend_letter_to_alleles = (len(ref_allele_raw) == 0 or len(alt_allele_raw) == 0) and ref_allele_on_forward_reference_path
-        
+
         # Get node and edge data (store only what's in the graph)
         edge_data = dict(graph.edges[edge])
         node_u_data = dict(graph.nodes[u])
         node_v_data = dict(graph.nodes[v])
         branch_point_node_data = dict(graph.nodes[branch_point])
-        
+
         # Compute and store repeat motif
         motif = graph.annotate_repeat_motif(edge, ref_allele_raw, alt_allele_raw, branch_point)
         edge_data['motif'] = motif
-        
+
         # Compute allele counts from genotype data
         if sample_to_genotype:
             ref_allele_count, alt_allele_count = cls.compute_allele_counts(
@@ -122,7 +122,7 @@ class _VariantData:
             # No genotype data, set to zero
             ref_allele_count = 0
             alt_allele_count = 0
-        
+
         # Create context dict for eval functions and VCF defaults
         # Store haplotype field names from graph's haplo_priorities
         haplotype_fields = set(graph.haplo_priorities.keys()) if hasattr(graph, 'haplo_priorities') else set()
@@ -135,7 +135,7 @@ class _VariantData:
         }
         # Merge with any user-provided context overrides
         context = {**default_context, **kwargs.get('context', {})}
-        
+
         return cls(
             chr_name=chr_name,
             ref_allele_raw=ref_allele_raw,
@@ -148,14 +148,14 @@ class _VariantData:
             alt_allele_count=alt_allele_count,
             context=context,
         )
-    
+
     @staticmethod
     def compute_vcf_alleles(ref_raw: str, alt_raw: str, last_letter: str,
                             ref_on_forward_path: bool, size_threshold: Optional[int]) -> tuple[str, str]:
         """Compute the final VCF ref and alt alleles from raw data."""
         ref_allele = ref_raw
         alt_allele = alt_raw
-        
+
         if not ref_on_forward_path:
             ref_allele = '.'
         else:
@@ -164,12 +164,12 @@ class _VariantData:
             if prepend:
                 ref_allele = last_letter + ref_allele
                 alt_allele = last_letter + alt_allele
-        
+
         # Truncate if size threshold specified
         if size_threshold:
             ref_allele = ref_allele[:size_threshold]
             alt_allele = alt_allele[:size_threshold]
-        
+
         return ref_allele, alt_allele
 
 
@@ -183,10 +183,10 @@ class _VariantRecord:
     vcf_position: int
     qual: str
     filter_field: str
-    info: list[str]
+    info: str
     format_field: str
     genotype_records: list[str]
-    
+
     @classmethod
     def from_variant_data(cls,
                          variant_info: _VariantData,
@@ -201,17 +201,17 @@ class _VariantRecord:
             variant_info.node_u_data.get('direction', 1) == 1 and variant_info.node_v_data.get('on_reference_path', 1) == 1,
             variant_info.context.get('size_threshold')
         )
-        
+
         # Build INFO field
         info_parts = []
         for field in info_fields:
             value = field.evaluate(variant_info)
             info_parts.append(f"{field.id}={value}")
-        info_fields = ';'.join(info_parts)
-        
+        info = ';'.join(info_parts)
+
         # Build variant ID
         variant_id = ''.join(tuple(map(lambda x: node_recover(x), edge)))
-        
+
         return cls(
             chr_name=variant_info.chr_name,
             vcf_position=variant_info.get_variant_position('position'),
@@ -220,11 +220,11 @@ class _VariantRecord:
             alt_allele=alt_allele if alt_allele else '.',
             qual=variant_info.context.get('qual', '60'),
             filter_field=variant_info.context.get('filter_field', 'PASS'),
-            info=info_fields,
+            info=info,
             format_field=variant_info.context.get('format_field', 'GT:CR:CA'),
             genotype_records=genotype_records
         )
-    
+
     def to_vcf_line(self) -> str:
         """Convert record to VCF line."""
         fields = [
@@ -250,7 +250,7 @@ class _InfoField:
     type: str
     description: str
     evaluate: Callable[[_VariantData], str]
-    
+
     def get_header(self) -> str:
         """Return the VCF header line for this INFO field."""
         return f'##INFO=<ID={self.id},Number={self.number},Type={self.type},Description="{self.description}">'
@@ -258,14 +258,14 @@ class _InfoField:
 
 def _get_default_info_fields() -> list[_InfoField]:
     """Returns the standard set of INFO fields for VCF output."""
-    
+
     info_fields = []
-    
+
     # Helper to get raw alleles
     def _get_raw_alleles(variant_info: _VariantData) -> tuple[str, str]:
         """Get raw ref and alt alleles."""
         return variant_info.ref_allele_raw, variant_info.alt_allele_raw
-    
+
     # Helper to compute VCF alleles from raw alleles
     def _compute_vcf_alleles(variant_info: _VariantData) -> tuple[str, str]:
         """Compute final VCF ref and alt alleles from raw data."""
@@ -273,10 +273,10 @@ def _get_default_info_fields() -> list[_InfoField]:
         ref_on_forward = _ref_on_forward_path(variant_info)
         last_letter = _get_last_letter_of_branch_point(variant_info)
         size_threshold = variant_info.context.get('size_threshold')
-        
+
         ref_allele = ref_raw
         alt_allele = alt_raw
-        
+
         if not ref_on_forward:
             ref_allele = '.'
         else:
@@ -284,20 +284,20 @@ def _get_default_info_fields() -> list[_InfoField]:
             if variant_info.needs_prepend:
                 ref_allele = last_letter + ref_allele
                 alt_allele = last_letter + alt_allele
-        
+
         # Truncate if size threshold specified
         if size_threshold:
             ref_allele = ref_allele[:size_threshold]
             alt_allele = alt_allele[:size_threshold]
-        
+
         return ref_allele, alt_allele
-    
+
     # Helper to get last letter of branch point
     def _get_last_letter_of_branch_point(variant_info: _VariantData) -> str:
         """Get the last letter of the branch point sequence."""
         branch_seq = variant_info.branch_point_node_data.get('sequence', '')
         return branch_seq[-1] if branch_seq else 'N'
-    
+
     # Helper to check if ref is on forward reference path
     def _ref_on_forward_path(variant_info: _VariantData) -> bool:
         """Check if ref allele is on forward reference path."""
@@ -305,7 +305,7 @@ def _get_default_info_fields() -> list[_InfoField]:
         direction = variant_info.node_u_data.get('direction', 1)
         on_ref_path = variant_info.node_v_data.get('on_reference_path', 1)
         return direction == 1 and on_ref_path == 1
-    
+
     # Define evaluation functions and _InfoFields
     def _eval_non_reference_allele(variant_info: _VariantData) -> str:
         # If ref is not on forward reference path, return the raw ref allele
@@ -318,16 +318,16 @@ def _get_default_info_fields() -> list[_InfoField]:
     def _eval_variant_type(variant_info: _VariantData) -> str:
         if variant_info.node_u_data['direction'] != variant_info.node_v_data['direction']:
             return 'INV'
-        
+
         if variant_info.edge_data['is_back_edge']:
             return 'DUP'
 
         # Use raw alleles to determine variant type
         ref, alt = _get_raw_alleles(variant_info)
-        
+
         ref_len = len(ref)
         alt_len = len(alt)
-        
+
         if ref_len == alt_len:
             if ref_len == 1:
                 return 'SNP'
@@ -368,7 +368,7 @@ def _get_default_info_fields() -> list[_InfoField]:
         positions = {}
         for field_name in haplotype_fields:
             positions[field_name] = variant_info.get_variant_position(field_name)
-        
+
         hp_str = ','.join([f'{hap}:{pos}' for hap, pos in sorted(positions.items()) if pos is not None])
         return hp_str if hp_str else '.'
     info_fields.append(_InfoField("HP", ".", "String", "Haplotype positions at reference tree edge (haplotype:position)", _eval_haplotype_positions))
@@ -384,18 +384,22 @@ def _get_default_info_fields() -> list[_InfoField]:
         nia = int(nearly_identical_alleles(ref_allele, alt_allele))
         return str(nia)
     info_fields.append(_InfoField("NIA", "1", "Integer", "Nearly identical alleles (1=yes, 0=no)", _eval_nearly_identical_alleles))
-    
+
+    def _eval_u_index(variant_info: _VariantData) -> str:
+        return str(variant_info.node_u_data['index'])
+    info_fields.append(_InfoField("UIDX", "1", "Integer", "Index of node u", _eval_u_index))
+
     return info_fields
 
 
-def _build_genotype_record(variant_edge: tuple[str, str], 
+def _build_genotype_record(variant_edge: tuple[str, str],
                             reference_edge: tuple[str, str],
                             sample_to_genotype: dict[str, tuple],
                             is_inversion: bool,
                             sample_order: list[str]
                             ) -> list[str]:
     """Build the genotype record for a variant edge.
-    
+
     Returns a list of genotype strings, one per sample in the order specified by sample_order.
     Format:
     - Haploid: "gt:cr:ca"
@@ -404,10 +408,10 @@ def _build_genotype_record(variant_edge: tuple[str, str],
     result = []
     def _parse_gt(gt):
         return str(gt) if gt is not None else '.'
-    
+
     for sample_name in sample_order:
         genotypes = sample_to_genotype[sample_name]
-        
+
         if len(genotypes) == 1:
             # Haploid
             gt, cr, ca = genotypes[0].variant_record(variant_edge, reference_edge)
@@ -419,33 +423,33 @@ def _build_genotype_record(variant_edge: tuple[str, str],
             # Diploid
             gt0, cr0, ca0 = genotypes[0].variant_record(variant_edge, reference_edge)
             gt1, cr1, ca1 = genotypes[1].variant_record(variant_edge, reference_edge)
-            
+
             if is_inversion:
                 cr0 = '.'
                 cr1 = '.'
-            
+
             gt0_str = _parse_gt(gt0)
             gt1_str = _parse_gt(gt1)
-            
+
             result.append(f"{gt0_str}|{gt1_str}:{cr0},{cr1}:{ca0},{ca1}")
         else:
             raise ValueError(f"Sample {sample_name} has {len(genotypes)} haplotypes, expected 1 or 2")
-    
+
     return result
 
 
 
 
-def _build_vcf_header(chr_name: str, 
+def _build_vcf_header(chr_name: str,
                          info_fields: list[_InfoField],
                          sample_ids: list[str]) -> str:
     """Generate VCF header including metadata and column names.
-    
+
     Args:
         chr_name: Chromosome name
         info_fields: List of INFO field definitions
         sample_ids: List of sample IDs for genotype columns
-        
+
     Returns:
         Complete VCF header as string
     """
@@ -455,17 +459,17 @@ def _build_vcf_header(chr_name: str,
     meta_info += '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype: 1 if ALT is present, 0 if absent, . if missing">\n'
     meta_info += '##FORMAT=<ID=CR,Number=R,Type=Integer,Description="Number of times visiting the REF allele">\n'
     meta_info += '##FORMAT=<ID=CA,Number=A,Type=Integer,Description="Number of times visiting the ALT allele">\n'
-    
+
     # Add INFO field headers
     for field in info_fields:
         meta_info += field.get_header() + '\n'
-    
+
     meta_info += f'##contig=<ID={chr_name}>\n'
-    
+
     # Add column header line
     header_names = ['CHROM', 'POS', 'ID', 'REF', 'ALT', 'QUAL', 'FILTER', 'INFO', 'FORMAT'] + sample_ids
     meta_info += '#' + '\t'.join(header_names) + '\n'
-    
+
     return meta_info
 
 
@@ -482,7 +486,7 @@ def write_vcf_from_graph(
 ) -> None:
     """
     Refactored VCF writing function using class-based design.
-    
+
     :param graph: PangenomeGraph instance
     :param gfa_path: the .gfa file, from which walks are read, or None to skip writing genotypes
     :param vcf_filename: the output vcf file path
@@ -495,33 +499,33 @@ def write_vcf_from_graph(
     :return:
     """
     logger.info(f"Start generating vcf")
-    
+
     if info_fields is None:
         info_fields = _get_default_info_fields()
-    
+
     reference_edges = graph.get_reference_edges()
-    
+
     if gfa_path:
         logger.info(f"Getting genotypes from GFA file: {gfa_path}")
         sample_to_genotype = graph.genotypes_from_gfa(gfa_path, exclude_terminus)
     else:
         sample_to_genotype = {}
-    
+
     sample_ids = list(sample_to_genotype.keys())
-    
+
     vcf_header = _build_vcf_header(chr_name, info_fields, sample_ids)
-    
+
     logger.info(f"Writing vcf: {vcf_filename}")
     with open(vcf_filename, 'w') as file:
         file.write(vcf_header)
-        
+
         for u, v in graph.sorted_variant_edges(exclude_terminus=exclude_terminus):
             reference_edge = reference_edges[(u, v)]
-            
+
             if graph.direction(u) == -1 and graph.direction(v) == -1:
                 u, v = edge_complement((u, v))
             edge = (u, v)
-            
+
             # Create _VariantData from graph
             variant_info = _VariantData.from_graph(
                 graph=graph,
@@ -531,11 +535,11 @@ def write_vcf_from_graph(
                 sample_to_genotype=sample_to_genotype,
                 size_threshold=size_threshold
             )
-            
+
             # Check for degenerate alleles if requested
             if check_degenerate and variant_info.is_degenerate:
                 continue
-            
+
             # Build genotype records for this edge if samples provided
             if sample_to_genotype:
                 is_inversion = variant_info.edge_data.get('is_inversion', False)
@@ -548,7 +552,7 @@ def write_vcf_from_graph(
                 )
             else:
                 genotype_records = []
-            
+
             # Build VCF record from variant data
             vcf_record = _VariantRecord.from_variant_data(
                 variant_info=variant_info,
@@ -556,6 +560,5 @@ def write_vcf_from_graph(
                 genotype_records=genotype_records,
                 info_fields=info_fields
             )
-            
-            file.write(vcf_record.to_vcf_line())
 
+            file.write(vcf_record.to_vcf_line())

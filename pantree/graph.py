@@ -49,6 +49,11 @@ class PangenomeGraph(nx.DiGraph):
         edges = [edge_with_data for edge_with_data in self.edges(data=True) if edge_with_data[2]['is_representative']]
         return sorted(edges, key=lambda edge: edge[2]['index'])
 
+    @property
+    def sorted_positive_nodes(self) -> list[str]:
+        nodes = [node for node, val in self.nodes.items() if val['direction'] == 1]
+        return list(sorted(nodes, key=lambda u: self.nodes[u]['index']))
+
     @lru_cache(maxsize=2)
     def sorted_variant_edges(self, exclude_terminus=True) -> list[str]:
         if exclude_terminus:
@@ -64,7 +69,7 @@ class PangenomeGraph(nx.DiGraph):
 
     @property
     def node_attribute_names(self) -> tuple:
-        return 'direction', 'sequence', 'position', 'right_position', 'tree_position', 'on_reference_path'
+        return 'direction', 'sequence', 'position', 'right_position', 'tree_position', 'on_reference_path', 'index'
 
     @property
     def vcf_attribute_names(self) -> tuple:
@@ -205,6 +210,7 @@ class PangenomeGraph(nx.DiGraph):
         G.annotate_branch_points()
 
         logger.info("Computing positions")
+        G.compute_binode_indices()
         G.compute_binode_positions()
         G.compute_binode_right_positions()
 
@@ -783,6 +789,19 @@ class PangenomeGraph(nx.DiGraph):
 
         return {e: _allele_length(e) for e in self.sorted_variant_edges(exclude_terminus=False)}
 
+    def compute_binode_indices(self):
+        """
+        Computes the topological sort of the binodes according to the DAG whose nodes are positive-direction
+        nodes and whose edges are not back edges nor inversions.
+        """
+        positive_subgraph = self.subgraph([n for n, direction in self.nodes(data="direction") if direction == 1])
+        positive_subgraph_no_cycle = self.edge_subgraph([edge for edge in positive_subgraph.edges() if not self.is_back_edge(edge)])
+        order = nx.topological_sort(positive_subgraph_no_cycle)
+        for i, node in enumerate(order):
+            self.nodes[node]['index'] = i
+            self.nodes[node_complement(node)]['index'] = i
+
+
 
     def compute_binode_positions(self):
         """
@@ -797,7 +816,7 @@ class PangenomeGraph(nx.DiGraph):
             self.nodes[node_complement(u)]['position'] = current_position
             self.nodes[node_complement(u)]['tree_position'] = current_position
 
-        for u in nx.topological_sort(self.reference_tree):
+        for u in self.sorted_positive_nodes:
             if self.nodes[u]['on_reference_path']:
                 continue
             predecessor = self.parent_in_tree(u)
@@ -812,15 +831,13 @@ class PangenomeGraph(nx.DiGraph):
     def compute_binode_right_positions(self):
         """Computes the right position of each binode, defined as the minimum position of its successors in the
         positive subgraph minus back edges."""
-        positive_subgraph = self.subgraph([n for n, direction in self.nodes(data="direction") if direction == 1])
-        positive_subgraph_no_cycle = self.edge_subgraph([edge for edge in positive_subgraph.edges() if not self.is_back_edge(edge)])
-        order = nx.topological_sort(positive_subgraph_no_cycle)
+        order = self.sorted_positive_nodes
         for u in reversed(list(order)):
             if self.on_reference_path(u):
                 self.nodes[u]['right_position'] = self.nodes[u]['position']
                 self.nodes[node_complement(u)]['right_position'] = self.nodes[node_complement(u)]['position']
                 continue
-            successor_positions = [self.right_position(v) for v in positive_subgraph.successors(u)]
+            successor_positions = [self.right_position(v) for v in self.successors(u)]
             self.nodes[u]['right_position'] = np.min(successor_positions)
             self.nodes[node_complement(u)]['right_position'] = self.nodes[u]['right_position']
 
