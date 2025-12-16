@@ -170,3 +170,4 @@ issues.md
 .idea/*
 .DS_Store
 output/*
+.rules

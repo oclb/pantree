@@ -1,4 +1,4 @@
-from pantree.cli import main
+from pantree.cli import cli
 from click.testing import CliRunner
 import os
 import tempfile
@@ -18,7 +18,7 @@ def test_main_simple_nested():
     
     try:
         # Run the main function
-        result = runner.invoke(main, [gfa_file, vcf_file, '--chr-id', 'chr1', '--ref-name', 'ref'])
+        result = runner.invoke(cli, ['gfa2vcf', gfa_file, vcf_file, '--chr-id', 'chr1', '--ref-name', 'ref'])
         
         # Print output for inspection
         print(f"Exit code: {result.exit_code}")

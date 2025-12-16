@@ -1,3 +1,4 @@
+from __future__ import annotations
 from functools import lru_cache, cached_property
 from math import inf
 import networkx as nx
@@ -27,8 +28,10 @@ class PangenomeGraph(nx.DiGraph):
     reference_tree: nx.classes.digraph.DiGraph
     reference_path: list[str]
     variant_edges: set
+    haplo_priorities: dict[str, int]
     number_of_biedges: int  # Needed because nx.number_of_edges() runs in O(number of edges)
     logger: logging.Logger
+    walks: dict[str, list[str]]
 
     # A valid walk proceeds from either +_terminus_+ to -_terminus_+ or from -_terminus_- to +_terminus_-
     @property
@@ -121,16 +124,16 @@ class PangenomeGraph(nx.DiGraph):
                  ref_name: str = 'GRCh38',
                  logger: Optional[logging.Logger] = None,
                  return_walks: bool = False,
-                 dfs_method_name: str = 'max_weight',
+                 dfs_method: Callable[[dict[str, Any]], list[str]] = dfs_methods['max_weight'],
                  priority_dict: dict[str, int] | None = None,
-                 ):
+                 ) -> PangenomeGraph:
         """
         Reads a .gfa file into a PangenomeGraph object.
         :param gfa_file: path to a file name ending in .gfa
         :param ref_name: name of the reference sample
         :param logger: Logger instance (if None, uses a null logger that does nothing)
         :param return_walks: if True, return (graph, walks) tuple
-        :param dfs_method_name: DFS method for tree construction ('max_weight' or 'contiguous')
+        :param dfs_method: DFS method for tree construction (function that takes a graph and returns a list of nodes)
         :param priority_dict: dict mapping sample names to priority integers (lower = higher priority)
         """
         # Use null logger if none provided
@@ -139,25 +142,17 @@ class PangenomeGraph(nx.DiGraph):
             logger.addHandler(logging.NullHandler())
             logger.setLevel(logging.CRITICAL + 1)  # Disable all logging
 
-        # Log input parameters
+        if priority_dict is None:
+            priority_dict = {ref_name: 0}
+
         logger.info(f"Loading GFA file: {gfa_file}")
-        logger.info(f"Parameters: ref_name={ref_name}, dfs_method={dfs_method_name}, priority_dict={priority_dict}")
+        logger.info(f"Parameters: ref_name={ref_name}, priority_dict={priority_dict}")
 
         if not os.path.exists(gfa_file):
             msg = f"GFA file not found: {gfa_file}"
             logger.error(msg)
             raise FileNotFoundError(msg)
 
-        dfs_method = dfs_methods[dfs_method_name]
-
-        # Default priority dictionary with 4 priority haplotypes + 'other'
-        if priority_dict is None:
-            priority_dict = {
-                'GRCh38': 0,
-                'CHM13': 1,
-                'HG002': 2,
-                'other': 999
-            }
 
         G = cls()
         G.haplo_priorities = {}
@@ -175,7 +170,9 @@ class PangenomeGraph(nx.DiGraph):
             G.add_biedge(line.u, line.v)
 
 
-        walks = []
+        if return_walks:
+            G.walks = {}
+
         for line in read_gfa_line_by_line(gfa_file, line_types=['W', 'P']):
             # Check if haplotype name starts with ref_name (e.g., 'GRCh38#0#chr20' starts with 'GRCh38')
             hit_reference = line.sample_name == ref_name
@@ -191,7 +188,8 @@ class PangenomeGraph(nx.DiGraph):
                 G.update_haplotype_positions(line)
 
             if return_walks:
-                walks.append(line.walk)
+                assert G.walks is not None
+                G.walks[line.hap_name] = line.walk
 
             walk_start_nodes.append(line.walk[0])
             walk_end_nodes.append(line.walk[-1])
@@ -214,7 +212,7 @@ class PangenomeGraph(nx.DiGraph):
         G.compute_binode_positions()
         G.compute_binode_right_positions()
 
-        return (G, walks) if return_walks else G
+        return G
 
     @classmethod
     def from_gfa_line_by_line(cls, *args, **kwargs):
@@ -227,7 +225,8 @@ class PangenomeGraph(nx.DiGraph):
                  reference_path: list[str] | None = None,
                  variant_edges: set | None = None,
                  haplo_priorities: dict[str, int] | None = None,
-                 logger: logging.Logger | None = None
+                 logger: logging.Logger | None = None,
+                 walks: dict[str, list[str]] | None = None
                  ):
         if directed_graph is None:
             directed_graph = nx.DiGraph()
@@ -241,6 +240,7 @@ class PangenomeGraph(nx.DiGraph):
         self.number_of_biedges = np.sum(
             [count_or_not for _, _, count_or_not in directed_graph.edges(data='is_representative')]
         )
+        self.walks = walks if walks is not None else {}
 
     def identify_variant_type(self,
                               edge: tuple[str, str],
@@ -443,9 +443,8 @@ class PangenomeGraph(nx.DiGraph):
                   vcf_filename: str,
                   chr_name: str,
                   exclude_terminus: bool = True,
-                  size_threshold: int = None,
+                  size_threshold: float = float('inf'),
                   check_degenerate: bool = False,
-                  log_path: str = None
                   ) -> None:
         """
         Writes the variant call format (vcf) file.
@@ -458,15 +457,12 @@ class PangenomeGraph(nx.DiGraph):
         :return:
         """
         # Use graph's logger, or create one if log_path provided
-        logger = self.logger
-        if log_path and not isinstance(self.logger, logging.Logger):
-            logger = setup_logger(log_path=log_path)
         write_vcf_from_graph(
             graph=self,
             gfa_path=gfa_path,
             vcf_filename=vcf_filename,
             chr_name=chr_name,
-            logger=logger,
+            logger=self.logger,
             exclude_terminus=exclude_terminus,
             size_threshold=size_threshold,
             check_degenerate=check_degenerate,

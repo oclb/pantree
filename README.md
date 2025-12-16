@@ -7,13 +7,13 @@
 - [Usage](#usage)
 
 ## Introduction
-`pantree` converts a pangenome graph `.gfa` file into a `.vcf` file containing variants identified in the graph. It creates a reference tree and defines variants as edges that are not in the reference tree. For more information, please see our [preprint](https://www.biorxiv.org/content/10.1101/2025.08.04.668502v1).
+`pantree` converts a pangenome graph `.gfa` file into a `.vcf` file containing variants identified in the graph. It creates a reference tree and defines variants as edges that are not in the reference tree. For more information, please see our preprint:
 
-`pantree` is a work in progress. If you use our code, please do reach out with questions and feedback.
+> Nowbandegani PS, Zhang S, Hu H, Li H, O'Connor LJ. Defining and cataloging variants in pangenome graphs. *bioRxiv*. 2025. doi: [10.1101/2025.08.04.668502](https://doi.org/10.1101/2025.08.04.668502)
 
 ## Installation
 
-You can install `pantree` using `uv`:
+You can install `pantree` using [uv](https://docs.astral.sh/uv/getting-started/installation/):
 
 ```bash
 git clone https://github.com/oclb/pantree.git
@@ -25,7 +25,7 @@ uv sync
 ## Command Line Interface
 
 ```bash
-pantree <gfa_file> <vcf_file> [options]
+uv run pantree <gfa_file> <vcf_file> [options]
 ```
 
 ### Required Arguments
@@ -39,45 +39,36 @@ pantree <gfa_file> <vcf_file> [options]
 - `--log-path TEXT`: Path to log file for tracking progress and memory usage
 - `--verbose, -v`: Enable verbose logging to console
 - `--dfs-method [max_weight|contiguous]`: DFS method for reference tree construction (default: "max_weight")
-  - `max_weight`: Prioritize edges with higher weights (more walks)
-  - `contiguous`: Prioritize contiguous haplotype paths
-- `--priority-samples TEXT`: Comma-separated list of sample names. For haplotypes belonging to samples in this list, haplotype positions are computed (for variant edges whose branch point belongs to the haplotype). With the 'contiguous' DFS method, these haplotypes are prioritized when building the DFS tree, in the order they are specified. 
+- `--priority-samples TEXT`: Comma-separated list of sample names. 
 
-### Example Usage
+The `--dfs-method=contiguous` option creates a reference tree whose branches follow individual haplotypes as long as they can. They switch to a new haplotype when the current haplotype ends, or when the next node on the current haplotype is already in the reference tree. This behavior only applies to haplotypes belonging to the `--priority-samples` list. When switching to a new haplotype, these same samples are prioritized, in the order that they are specified. Additionally, 'haplotype positions' are computed for haplotypes belonging to samples in this list: if that haplotype visits the branch point of some haplotype, then the position of that branch point is used to compute the haplotype position of that variant edge. This follows the same rule as the ordinary `POS` field, which is that the position of the variant is the position of the first base of the `REF` and `ALT` alleles; ordinarily this is the first base after the end of the branch point node, but for on-reference indels, one base is prepended to both alleles to make them non-empty, and accordingly the position is decremented by one.
+
+
+### `consolidate` subcommand
+
+You can take a `.vcf` produced by `pantree` and produce a single-haplotype `.vcf` file containing pairwise differences between that sample and the linear reference genome. Any nested variation will be collapsed - for example, if the haplotype has an insertion, and then a SNP on that insertion, then these will be combined. 
+
 ```bash
-pantree input.gfa output.vcf
-
-pantree input.gfa output.vcf \
-  --chr-id chr20 \
-  --ref-name GRCh38 \
-  --log-path analysis.log \
-  --verbose \
-  --dfs-method contiguous \
-  --priority-samples "GRCh38,CHM13,HG002"
+pantree consolidate <vcf_file> <sample_name> <haplotype_number> <output_path>
 ```
 
 ## Python API Usage
 ```python
 from pantree import PangenomeGraph, Genotype
-from pantree.logger import setup_logger
 
 gfa_path = "/path/to/graph.gfa"
 
-logger = setup_logger(log_path="analysis.log", verbose=True)
 G: PangenomeGraph = PangenomeGraph.from_gfa(
     gfa_path, 
     ref_name="GRCh38",
-    logger=logger,
-    dfs_method_name="max_weight",
-    priority_dict={"GRCh38": 0, "CHM13": 1, "HG002": 2}
 )
 
 # Also return walks; causes increased memory requirements
 walks: list[list[str]]
-G, walks = PangenomeGraph.from_gfa(gfa_path, return_walks=True)
+G = PangenomeGraph.from_gfa(gfa_path, return_walks=True)
 
 # Get the genotype of some walk
-genotype: Genotype = Genotype.genotype(G, walks[0], exclude_terminus=True)
+genotype: Genotype = Genotype.genotype(G, G.walks['CHM13'], exclude_terminus=True)
 
 # Generate VCF file with genotypes
 vcf_path = "/path/to/output.vcf"
@@ -86,12 +77,4 @@ G.write_vcf(gfa_path, vcf_path, chr_id)
 
 # Generate VCF without genotypes
 G.write_vcf(None, vcf_path, chr_id)
-
-# Get genotypes from GFA
-sample_to_genotype = G.genotypes_from_gfa(gfa_path)
-
-# Access graph properties
-print(f"Number of nodes: {G.number_of_nodes()}")
-print(f"Number of variant edges: {len(G.variant_edges)}")
-print(f"Reference path length: {len(G.reference_path)}")
 ```

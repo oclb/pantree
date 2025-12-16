@@ -170,7 +170,7 @@ class TestVCFRecord(unittest.TestCase):
             ref_allele_raw="A",
             alt_allele_raw="T",
             edge_data={'is_back_edge': False, 'is_inversion': False, 'motif': None},
-            node_u_data={'direction': 1, 'distance_from_reference': 0, 'position': 100},
+            node_u_data={'direction': 1, 'distance_from_reference': 0, 'position': 100, 'index': 1},
             node_v_data={'direction': 1, 'distance_from_reference': 0, 'position': 101, 'on_reference_path': 1},
             branch_point_node_data={'sequence': 'ACGT', 'position': 99},
             ref_allele_count=1,

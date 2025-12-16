@@ -89,7 +89,7 @@ class _VariantData:
                    reference_edge: tuple[str, str],
                    chr_name: str,
                    sample_to_genotype: dict,
-                   size_threshold: Optional[int] = None,
+                   size_threshold: float = float('inf'),
                    **kwargs) -> "_VariantData":
         """Compute variant information from a graph and variant edge."""
 
@@ -165,10 +165,10 @@ class _VariantData:
                 ref_allele = last_letter + ref_allele
                 alt_allele = last_letter + alt_allele
 
-        # Truncate if size threshold specified
-        if size_threshold:
-            ref_allele = ref_allele[:size_threshold]
-            alt_allele = alt_allele[:size_threshold]
+        # Truncate if size threshold specified (check for finite value)
+        if size_threshold is not None and size_threshold != float('inf'):
+            ref_allele = ref_allele[:int(size_threshold)]
+            alt_allele = alt_allele[:int(size_threshold)]
 
         return ref_allele, alt_allele
 
@@ -285,10 +285,10 @@ def _get_default_info_fields() -> list[_InfoField]:
                 ref_allele = last_letter + ref_allele
                 alt_allele = last_letter + alt_allele
 
-        # Truncate if size threshold specified
-        if size_threshold:
-            ref_allele = ref_allele[:size_threshold]
-            alt_allele = alt_allele[:size_threshold]
+        # Truncate if size threshold specified (check for finite value)
+        if size_threshold is not None and size_threshold != float('inf'):
+            ref_allele = ref_allele[:int(size_threshold)]
+            alt_allele = alt_allele[:int(size_threshold)]
 
         return ref_allele, alt_allele
 
@@ -480,7 +480,7 @@ def write_vcf_from_graph(
     chr_name: str,
     logger: logging.Logger,
     exclude_terminus: bool = True,
-    size_threshold: int = None,
+    size_threshold: float = float('inf'),
     check_degenerate: bool = False,
     info_fields: Optional[list[_InfoField]] = None
 ) -> None:

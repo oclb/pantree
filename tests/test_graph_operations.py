@@ -99,24 +99,118 @@ class GraphOperationsTestBase:
                     self.assertTrue(self.G.on_reference_path(edge))
 
     def test_dfs_method_parameter(self):
-        """Test that different dfs_method_name parameters work correctly"""
+        """Test that different dfs_method parameters work correctly"""
         test_dir = os.path.dirname(__file__)
         gfa_file = os.path.join(test_dir, "data", "simple_nested.gfa")
 
         # Test with default max_weight method
-        G_max_weight = PangenomeGraph.from_gfa_line_by_line(gfa_file, ref_name='ref', dfs_method_name='max_weight')
+        G_max_weight = PangenomeGraph.from_gfa_line_by_line(gfa_file, ref_name='ref', dfs_method=dfs_methods['max_weight'])
         self.assertIsNotNone(G_max_weight.reference_tree)
         self.assertGreater(G_max_weight.reference_tree.number_of_edges(), 0)
 
         # Test that the max_weight method works (it's the only one compatible with standard GFA files)
         # The contiguous method requires haplotype labels which aren't present in standard GFA files
-        G_again = PangenomeGraph.from_gfa_line_by_line(gfa_file, ref_name='ref', dfs_method_name='max_weight')
+        G_again = PangenomeGraph.from_gfa_line_by_line(gfa_file, ref_name='ref', dfs_method=dfs_methods['max_weight'])
         self.assertIsNotNone(G_again.reference_tree)
         self.assertGreater(G_again.reference_tree.number_of_edges(), 0)
 
         # Test invalid method name raises appropriate error
         with self.assertRaises(KeyError):
-            PangenomeGraph.from_gfa_line_by_line(gfa_file, ref_name='ref', dfs_method_name='invalid_method')
+            PangenomeGraph.from_gfa_line_by_line(gfa_file, ref_name='ref', dfs_method=dfs_methods['invalid_method'])
+
+    def test_dfs_contiguous_method(self):
+        """Test that the contiguous DFS method works with from_gfa"""
+        test_dir = os.path.dirname(__file__)
+        gfa_file = os.path.join(test_dir, "data", "simple_nested.gfa")
+
+        # The contiguous method requires priority_dict to label edges with haplotype info
+        priority_dict = {
+            'ref': 0,
+            'sample1': 1,
+            'sample2': 2,
+        }
+
+        G_contiguous = PangenomeGraph.from_gfa_line_by_line(
+            gfa_file,
+            ref_name='ref',
+            dfs_method=dfs_methods['contiguous'],
+            priority_dict=priority_dict
+        )
+
+        self.assertIsNotNone(G_contiguous.reference_tree)
+        self.assertGreater(G_contiguous.reference_tree.number_of_edges(), 0)
+
+        # Verify the graph has expected structure
+        self.assertGreater(G_contiguous.number_of_nodes(), 0)
+        self.assertGreater(len(G_contiguous.variant_edges), 0)
+
+        # Reference path should still be correctly identified
+        self.assertIsNotNone(G_contiguous.reference_path)
+        self.assertGreater(len(G_contiguous.reference_path), 0)
+
+    def test_priority_dict_affects_haplotype_positions(self):
+        """Test that priority_dict correctly affects which haplotype positions are stored on nodes"""
+        test_dir = os.path.dirname(__file__)
+        gfa_file = os.path.join(test_dir, "data", "simple_nested.gfa")
+
+        # Load with sample1 as highest priority (after ref)
+        priority_dict_sample1_first = {
+            'ref': 0,
+            'sample1': 1,
+            'sample2': 2,
+        }
+        G1 = PangenomeGraph.from_gfa_line_by_line(
+            gfa_file,
+            ref_name='ref',
+            priority_dict=priority_dict_sample1_first
+        )
+
+        # Load with sample2 as highest priority (after ref)
+        priority_dict_sample2_first = {
+            'ref': 0,
+            'sample2': 1,
+            'sample1': 2,
+        }
+        G2 = PangenomeGraph.from_gfa_line_by_line(
+            gfa_file,
+            ref_name='ref',
+            priority_dict=priority_dict_sample2_first
+        )
+
+        # Both graphs should have haplotype positions stored
+        # Check that haplo_priorities reflects the priority_dict
+        self.assertIn('ref#0#0', G1.haplo_priorities)
+        self.assertIn('ref#0#0', G2.haplo_priorities)
+
+        # Verify that haplotype positions are stored on nodes
+        excluded_keys = {'direction', 'sequence', 'position', 'right_position',
+                         'distance_from_reference', 'on_reference_path', 'index',
+                         'tree_position'}
+
+        # Find a node that's on a sample-specific path (not just reference)
+        sample1_hap_key = None
+        sample2_hap_key = None
+        for node, node_data in G1.nodes.items():
+            if 'terminus' in node:
+                continue
+            for key in node_data.keys():
+                if key.startswith('sample1#'):
+                    sample1_hap_key = key
+                if key.startswith('sample2#'):
+                    sample2_hap_key = key
+
+        # Both samples should have haplotype positions tracked
+        self.assertIsNotNone(sample1_hap_key, "sample1 haplotype positions should be tracked")
+        self.assertIsNotNone(sample2_hap_key, "sample2 haplotype positions should be tracked")
+
+        # Verify positions are integers and non-negative
+        for node, node_data in G1.nodes.items():
+            if 'terminus' in node:
+                continue
+            for key in node_data.keys():
+                if key not in excluded_keys and isinstance(node_data[key], int):
+                    self.assertGreaterEqual(node_data[key], 0,
+                        f"Position for {key} on node {node} should be >= 0")
 
 
 class TestGraphOperations(GraphOperationsTestBase, unittest.TestCase):

@@ -5,26 +5,37 @@ import sys
 import os
 from .graph import PangenomeGraph
 from .logger import setup_logger
+from .walk_variants import process_haplotype_variants
 import click
+from .dfs import dfs_methods
 
-@click.command(context_settings=dict(help_option_names=['-h', '--help']))
+@click.group(context_settings={"help_option_names": ["-h", "--help"]})
+def cli():
+    """pantree: pangenome graph to VCF conversion tools"""
+    pass
+
+@cli.command(name='gfa2vcf', context_settings={"help_option_names": ["-h", "--help"]})
 @click.argument("gfa_file")
 @click.argument("vcf_file")
-@click.option("--chr-id", default="chr0", help="Chromosome ID for VCF output")
-@click.option("--ref-name", default="GRCh38", help="Reference sample name")
-@click.option("--no-genotypes", is_flag=True, help="Skip genotype computation")
+@click.option("--chr-id", "-c", default="chr0", help="Chromosome ID for VCF output")
+@click.option("--ref-name", "-r", default="GRCh38", help="Reference sample name")
+@click.option("--no-genotypes", is_flag=True, help="Do not put genotypes in VCF")
 @click.option("--log-path", default=None, help="Path to log file")
-@click.option("--verbose", "-v", is_flag=True, help="Enable verbose logging to console")
-@click.option("--dfs-method", default="max_weight", type=click.Choice(['max_weight', 'contiguous']), 
+@click.option("--verbose", "-v", is_flag=True, help="Print log statements to console")
+@click.option("--dfs-method", default="max_weight", type=click.Choice(dfs_methods.keys()),
               help="DFS method for tree construction")
 @click.option("--priority-samples", default=None,
     help="Comma-separated list of sample names along which to compute variant positions; "
          "if dfs-method is 'contiguous', these are prioritized when building the DFS tree "
          "in the order they are provided")
-def main(gfa_file, vcf_file, chr_id, ref_name, no_genotypes, log_path, verbose, dfs_method, priority_samples):
+def gfa2vcf(gfa_file, vcf_file, chr_id, ref_name, no_genotypes, log_path, verbose, dfs_method, priority_samples):
+    """Convert GFA pangenome graph to VCF format"""
     # Set up logger
     logger = setup_logger(log_path=log_path, verbose=verbose) if (log_path or verbose) else None
-    
+
+    # Convert dfs_method string to function
+    dfs_method_func = dfs_methods[dfs_method]
+
     if logger:
         logger.info(f"pantree CLI invoked")
         logger.info(f"Input GFA: {gfa_file}")
@@ -36,7 +47,7 @@ def main(gfa_file, vcf_file, chr_id, ref_name, no_genotypes, log_path, verbose, 
     if not os.path.exists(gfa_file):
         print(f"Error: GFA file '{gfa_file}' not found", file=sys.stderr)
         sys.exit(1)
-    
+
     # Haplotype priorities for DFS
     priority_dict = None
     if priority_samples:
@@ -44,26 +55,57 @@ def main(gfa_file, vcf_file, chr_id, ref_name, no_genotypes, log_path, verbose, 
         priority_dict = {sample: i for i, sample in enumerate(sample_list)}
         if logger:
             logger.info(f"Priority dict: {priority_dict}")
-    
+
     # Load the graph
     G = PangenomeGraph.from_gfa(
         gfa_file,
         ref_name=ref_name,
         logger=logger,
-        dfs_method_name=dfs_method,
+        dfs_method=dfs_method_func,
         priority_dict=priority_dict
     )
-    
+
     # Generate VCF
     if no_genotypes:
         G.write_vcf(None, vcf_file, chr_id)
     else:
         G.write_vcf(gfa_file, vcf_file, chr_id)
-    
+
     if logger:
         logger.info(f"Wrote VCF file: {vcf_file}")
     else:
         print(f"Wrote VCF file: {vcf_file}")
 
+@cli.command(name='consolidate', context_settings={"help_option_names": ["-h", "--help"]})
+@click.argument("input_vcf")
+@click.argument("sample_name")
+@click.argument("haplotype_number", type=int)
+@click.argument("output_vcf")
+def consolidate_cmd(input_vcf, sample_name, haplotype_number, output_vcf):
+    """Consolidate overlapping variants for a specific haplotype.
+
+    INPUT_VCF: Path to input VCF file
+
+    SAMPLE_NAME: Name of the sample to analyze
+
+    HAPLOTYPE_NUMBER: Which haplotype to use (0 or 1 for diploid)
+
+    OUTPUT_VCF: Path to write output VCF file
+    """
+    if not os.path.exists(input_vcf):
+        print(f"Error: VCF file '{input_vcf}' not found", file=sys.stderr)
+        sys.exit(1)
+
+    process_haplotype_variants(input_vcf, sample_name, haplotype_number, output_vcf)
+    print(f"Wrote consolidated VCF file: {output_vcf}")
+
+def main():
+    """Backward compatibility wrapper for pantree CLI"""
+    import sys
+    # If called as 'pantree' with arguments, assume gfa2vcf
+    if len(sys.argv) > 1 and not sys.argv[1].startswith('-') and sys.argv[1] not in ['gfa2vcf', 'consolidate']:
+        sys.argv.insert(1, 'gfa2vcf')
+    cli()
+
 if __name__ == "__main__":
-    main()
+    cli()
