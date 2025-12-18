@@ -282,5 +282,54 @@ class TestGenotypesFromGFA(unittest.TestCase):
                                f"{sample_name} should have 2 haplotypes")
 
 
+class TestGenotypeMatchesWalk(unittest.TestCase):
+    """Test that genotypes correctly match the walks they were computed from"""
+
+    def test_verify_genotype_matches_walk_simple_nested(self):
+        """Test verification on simple_nested.gfa"""
+        test_dir = os.path.dirname(__file__)
+        gfa_file = os.path.join(test_dir, "data", "simple_nested.gfa")
+        G = PangenomeGraph.from_gfa(gfa_file, ref_name='ref')
+
+        # Test with a simple walk
+        walk = ['1_+', '2_+', '4_+', '9_+', '10_+', '11_+']
+        genotype = Genotype.genotype(G, walk, exclude_terminus=True)
+
+        is_valid, errors = Genotype.verify_genotype_matches_walk(G, walk, genotype)
+        self.assertTrue(is_valid, f"Genotype should match walk. Errors: {errors}")
+
+    def test_verify_all_haplotypes_c4a_with_inversion(self):
+        """Test that all haplotypes in c4a_with_inversion_and_sequences.gfa have matching genotypes"""
+        test_dir = os.path.dirname(__file__)
+        gfa_file = os.path.join(test_dir, "data", "c4a_with_inversion_and_sequences.gfa")
+
+        if not os.path.exists(gfa_file):
+            self.skipTest(f"GFA file not found: {gfa_file}")
+
+        G = PangenomeGraph.from_gfa(gfa_file, ref_name='ref', return_walks=True)
+
+        from collections import defaultdict
+        from pantree.gfa import read_gfa_line_by_line
+
+        haplotype_walks = defaultdict(list)
+        for line in read_gfa_line_by_line(gfa_file, line_types=['W', 'P']):
+            haplotype_name = '#'.join(line.hap_name.split('#')[:2])
+            haplotype_walks[haplotype_name].append(line.walk)
+
+        for hap_name, walks in haplotype_walks.items():
+            if walks:
+                # Compute genotype directly from walks
+                genotype = Genotype.genotype(G, walks[0], exclude_terminus=True)
+                for walk in walks[1:]:
+                    genotype.update(Genotype.genotype(G, walk, exclude_terminus=True))
+
+                is_valid, errors = Genotype.verify_genotype_matches_walks(G, walks, genotype)
+                self.assertTrue(
+                    is_valid,
+                    f"Genotype for {hap_name} should match walks. Errors: {errors[:5]}"
+                )
+
+
+
 if __name__ == '__main__':
     unittest.main()

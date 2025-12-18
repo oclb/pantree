@@ -481,7 +481,7 @@ class PangenomeGraph(nx.DiGraph):
         which are aggregated together.
         """
         self.logger.info("Computing genotype for haplotypes")
-        genotype_dict = {}
+        genotype_dict: dict[str, Genotype] = {}
         names = defaultdict(set)
         for line in read_gfa_line_by_line(gfa_path, line_types=['W', 'P']):
             walk = line.walk

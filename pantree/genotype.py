@@ -88,3 +88,130 @@ class Genotype:
         if cr + ca > 0:
             assert gt is not None, "A missing genotype should have allele counts of 0"
         return gt, cr, ca
+
+    @staticmethod
+    def verify_genotype_matches_walk(
+        graph: "PangenomeGraph",
+        walk: list[str],
+        genotype: "Genotype"
+    ) -> tuple[bool, list[str]]:
+        """
+        Verify that a genotype correctly represents the edges traversed by a walk.
+        
+        For each edge in the walk:
+        - If it's a tree edge (ref), it should be counted in ref_counts
+        - If it's a variant edge (alt), it should be counted in alt_counts
+        
+        Args:
+            graph: PangenomeGraph object
+            walk: list of nodes (without terminal nodes)
+            genotype: Genotype object to verify
+            
+        Returns:
+            Tuple of (is_valid, list of error messages)
+        """
+        errors = []
+        
+        # Build expected counts by traversing the walk
+        expected_ref = {}
+        expected_alt = {}
+        
+        # Add terminal nodes to walk (same logic as in genotype() method)
+        start = [graph.termini[0] + '_+' if graph.direction(walk[0]) == 1 else graph.termini[1] + '_-']
+        end = [graph.termini[1] + '_+' if graph.direction(walk[-1]) == 1 else graph.termini[0] + '_-']
+        full_walk = start + walk + end
+        
+        for e in zip(full_walk[:-1], full_walk[1:]):
+            if not graph.has_edge(*e):
+                errors.append(f"Walk contains edge {e} which is not in the graph")
+                continue
+                
+            if graph.edges[e]['is_in_tree']:
+                expected_ref[e] = expected_ref.get(e, 0) + 1
+            else:
+                expected_alt[e] = expected_alt.get(e, 0) + 1
+        
+        # Compare expected vs actual ref counts
+        for edge, expected_count in expected_ref.items():
+            actual_count = get_from_biedge_dict(genotype.ref_counts, edge, 0)
+            if actual_count < expected_count:
+                errors.append(
+                    f"Ref edge {edge}: expected count >= {expected_count}, got {actual_count}"
+                )
+        
+        # Compare expected vs actual alt counts
+        for edge, expected_count in expected_alt.items():
+            actual_count = get_from_biedge_dict(genotype.alt_counts, edge, 0)
+            if actual_count < expected_count:
+                errors.append(
+                    f"Alt edge {edge}: expected count >= {expected_count}, got {actual_count}"
+                )
+        
+        return len(errors) == 0, errors
+
+    @staticmethod
+    def verify_genotype_matches_walks(
+        graph: "PangenomeGraph",
+        walks: list[list[str]],
+        genotype: "Genotype"
+    ) -> tuple[bool, list[str]]:
+        """
+        Verify that a genotype correctly represents the edges traversed by multiple walks
+        (which may be aggregated together for a single haplotype).
+        
+        Args:
+            graph: PangenomeGraph object
+            walks: list of walks (each walk is a list of nodes without terminal nodes)
+            genotype: Genotype object to verify
+            
+        Returns:
+            Tuple of (is_valid, list of error messages)
+        """
+        errors = []
+        
+        # Build expected counts by traversing all walks
+        expected_ref = {}
+        expected_alt = {}
+        
+        for walk in walks:
+            # Add terminal nodes to walk
+            start = [graph.termini[0] + '_+' if graph.direction(walk[0]) == 1 else graph.termini[1] + '_-']
+            end = [graph.termini[1] + '_+' if graph.direction(walk[-1]) == 1 else graph.termini[0] + '_-']
+            full_walk = start + walk + end
+            
+            for e in zip(full_walk[:-1], full_walk[1:]):
+                if not graph.has_edge(*e):
+                    errors.append(f"Walk contains edge {e} which is not in the graph")
+                    continue
+                    
+                if graph.edges[e]['is_in_tree']:
+                    expected_ref[e] = expected_ref.get(e, 0) + 1
+                else:
+                    expected_alt[e] = expected_alt.get(e, 0) + 1
+        
+        # Compare expected vs actual ref counts
+        for edge, expected_count in expected_ref.items():
+            actual_count = get_from_biedge_dict(genotype.ref_counts, edge, 0)
+            if actual_count != expected_count:
+                errors.append(
+                    f"Ref edge {edge}: expected count {expected_count}, got {actual_count}"
+                )
+        
+        # Compare expected vs actual alt counts
+        for edge, expected_count in expected_alt.items():
+            actual_count = get_from_biedge_dict(genotype.alt_counts, edge, 0)
+            if actual_count != expected_count:
+                errors.append(
+                    f"Alt edge {edge}: expected count {expected_count}, got {actual_count}"
+                )
+        
+        # Check for extra edges in genotype that weren't in walks
+        for edge in genotype.ref_counts:
+            if edge not in expected_ref and edge_complement(edge) not in expected_ref:
+                errors.append(f"Genotype has ref edge {edge} not traversed by any walk")
+        
+        for edge in genotype.alt_counts:
+            if edge not in expected_alt and edge_complement(edge) not in expected_alt:
+                errors.append(f"Genotype has alt edge {edge} not traversed by any walk")
+        
+        return len(errors) == 0, errors

@@ -29,7 +29,7 @@ class GFAWalkLine:
     def from_parts_W(cls, parts: list[str]):
         hap_name = cls._get_hap_name(parts)
         sample_name = parts[1]
-        contig_start = int(parts[4]) if parts[4] != '*' else 0
+        contig_start = int(parts[4]) if parts[4] != '*' else 0 # TODO
         walk = cls._parse_W_walk(parts[6])
         return cls(hap_name, sample_name, contig_start, walk)
 
@@ -79,7 +79,7 @@ class GFANodeLine:
 class GFAEdgeLine:
     u: str
     v: str
-    
+
     @classmethod
     def from_parts(cls, parts: list[str]):
         u = parts[1] + '_' + parts[2]
@@ -98,17 +98,17 @@ line_getters = {
 def read_gfa_line_by_line(filename: str, line_types: list[str]|None = None):
     """
     Read a GFA file line by line, yielding parsed line objects.
-    
+
     Args:
         filename: Path to GFA file (can be .gz compressed)
         line_types: List of line types to parse (S, L, W, P). If None, parses all types.
-    
+
     Yields:
         GFANodeLine, GFAEdgeLine, or GFAWalkLine objects depending on line type
     """
     if line_types is None:
         line_types = ['S', 'L', 'W', 'P']
-    
+
     if filename.endswith('.gz'):
         opener = gzip.open
     else:
