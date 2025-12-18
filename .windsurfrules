@@ -1,0 +1,14 @@
+-Make only changes that I request, to the requested file.
+-I usually want short code edits.
+-Do not make random changes to things like whitespace or variable names; these take up my time for no reason.
+-Code does not need to be "robust" - there is no need for handling lots of cases. The
+user is me. If the data is not as expected I want the code to crash.
+-For example, when editing my code, do not add error handling or re-order things.
+-Do not revert changes that I make to your code. 
+-When your previous changes do not go through, it means I rejected them. Do not make the same change again. 
+-If you are unsure how to proceed, ask for my instructions.
+-This repo has a README.md. Review the readme at any time.
+-Run tests using 'uv run pytest my_test.py'.
+-Run scripts using 'uv run my_script.py'.
+-When editing cython files, you must compile before running or testing them.
+-Compile cython files using './compile_cython.sh'

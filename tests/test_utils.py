@@ -1,5 +1,5 @@
 import unittest
-from graph_var.utils import nearly_identical_alleles
+from pantree.utils import nearly_identical_alleles
 
 class TestUtils(unittest.TestCase):
     def test_nearly_identical_alleles(self):

@@ -1,34 +1,37 @@
+from __future__ import annotations
 from functools import lru_cache, cached_property
 from math import inf
 import networkx as nx
 import numpy as np
 from .utils import (
-    read_gfa,
-    read_gfa_line_by_line,
     node_complement,
     edge_complement,
     sequence_complement,
     walk_complement,
-    nearly_identical_alleles,
-    _node_recover,
-    merge_dicts,
-    log_action,
-    GFAWalkLine,
-    GFANodeLine,
-    GFAEdgeLine,
+    node_recover,
 )
-from .search_tree import assign_node_directions, max_weight_dfs_tree
+from .gfa import read_gfa_line_by_line, GFAWalkLine
+from .logger import setup_logger
+import logging
+from .dfs import assign_node_directions, dfs_methods
+from .genotype import Genotype
+from .vcf import write_vcf_from_graph
 import os
 import time
 from collections import defaultdict
 from tqdm import tqdm
-from typing import Any, Optional
+from typing import Any, Optional, Callable
+import warnings
+from functools import lru_cache
 
 class PangenomeGraph(nx.DiGraph):
     reference_tree: nx.classes.digraph.DiGraph
     reference_path: list[str]
     variant_edges: set
+    haplo_priorities: dict[str, int]
     number_of_biedges: int  # Needed because nx.number_of_edges() runs in O(number of edges)
+    logger: logging.Logger
+    walks: dict[str, list[str]]
 
     # A valid walk proceeds from either +_terminus_+ to -_terminus_+ or from -_terminus_- to +_terminus_-
     @property
@@ -45,9 +48,14 @@ class PangenomeGraph(nx.DiGraph):
 
     # Each biedge has a representative edge, whichever is in the .gfa file
     @property
-    def sorted_biedge_representatives(self) -> list[tuple]:
+    def sorted_biedge_representatives(self) -> list[str]:
         edges = [edge_with_data for edge_with_data in self.edges(data=True) if edge_with_data[2]['is_representative']]
         return sorted(edges, key=lambda edge: edge[2]['index'])
+
+    @property
+    def sorted_positive_nodes(self) -> list[str]:
+        nodes = [node for node, val in self.nodes.items() if val['direction'] == 1]
+        return list(sorted(nodes, key=lambda u: self.nodes[u]['index']))
 
     @lru_cache(maxsize=2)
     def sorted_variant_edges(self, exclude_terminus=True) -> list[str]:
@@ -55,11 +63,7 @@ class PangenomeGraph(nx.DiGraph):
             sorted_vars = [edge for edge in self.variant_edges if not self.is_terminal(edge)]
         else:
             sorted_vars = self.variant_edges
-        sorted_vars = sorted(sorted_vars, key=lambda x:
-                      (self.get_vcf_position(x),
-                       int(self.nodes[self.positive_variant_edge(x)[0]]["distance_from_reference"]),
-                       int(self.nodes[self.positive_variant_edge(x)[1]]["distance_from_reference"]),
-                       self.positive_variant_edge(x)[0], self.positive_variant_edge(x)[1]))
+        sorted_vars = sorted(sorted_vars, key=lambda x: self.position(self.edges[x]['branch_point']))
         return sorted_vars
 
     @property
@@ -68,7 +72,7 @@ class PangenomeGraph(nx.DiGraph):
 
     @property
     def node_attribute_names(self) -> tuple:
-        return 'direction', 'sequence', 'position', 'right_position', 'distance_from_reference', 'on_reference_path'
+        return 'direction', 'sequence', 'position', 'right_position', 'tree_position', 'on_reference_path', 'index'
 
     @property
     def vcf_attribute_names(self) -> tuple:
@@ -81,18 +85,23 @@ class PangenomeGraph(nx.DiGraph):
     def on_reference_path(self, node_or_edge):
         if type(node_or_edge) is tuple:
             if not self.has_edge(*node_or_edge):
-                raise ValueError("Graph does not have edge {node_or_edge}")
+                msg = f"Graph does not have edge {node_or_edge}"
+                self.logger.error(msg)
+                raise ValueError(msg)
             return self.nodes[node_or_edge[1]]['on_reference_path']
         elif type(node_or_edge) is str:
             if not self.has_node(node_or_edge):
-                raise ValueError("Graph does not have node {node_or_edge}")
+                msg = f"Graph does not have node {node_or_edge}"
+                self.logger.error(msg)
+                raise ValueError(msg)
             return self.nodes[node_or_edge]['on_reference_path']
 
-    def parent_in_tree(self, node: str) -> str | None:
+    def parent_in_tree(self, node: str) -> str:
         if self.reference_tree.in_degree(node) == 0:
             return None
         return next(self.reference_tree.predecessors(node))
 
+    @lru_cache(maxsize=None)
     def position(self, node_or_edge: Any) -> Any:
         if isinstance(node_or_edge, str):
             return self.nodes[node_or_edge]['position']
@@ -110,112 +119,133 @@ class PangenomeGraph(nx.DiGraph):
             raise TypeError
 
     @classmethod
-    def from_gfa_line_by_line(cls,
+    def from_gfa(cls,
                  gfa_file: str,
                  ref_name: str = 'GRCh38',
-                 log_path: str | None = None,
+                 logger: Optional[logging.Logger] = None,
                  return_walks: bool = False,
-                 priority_dict: dict[str, int] | None = None, # TODO give default
-                 ):
+                 dfs_method: Callable[[dict[str, Any]], list[str]] = dfs_methods['max_weight'],
+                 priority_dict: dict[str, int] | None = None,
+                 ) -> PangenomeGraph:
         """
         Reads a .gfa file into a PangenomeGraph object.
         :param gfa_file: path to a file name ending in .gfa
+        :param ref_name: name of the reference sample
+        :param logger: Logger instance (if None, uses a null logger that does nothing)
+        :param return_walks: if True, return (graph, walks) tuple
+        :param dfs_method: DFS method for tree construction (function that takes a graph and returns a list of nodes)
+        :param priority_dict: dict mapping sample names to priority integers (lower = higher priority)
         """
-        if log_path:
-            log_action(log_path, f"Start constructing pangenome graph")
-
-        if not os.path.exists(gfa_file):
-            raise FileNotFoundError(gfa_file)
+        # Use null logger if none provided
+        if logger is None:
+            logger = logging.getLogger('pantree')
+            logger.addHandler(logging.NullHandler())
+            logger.setLevel(logging.CRITICAL + 1)  # Disable all logging
 
         if priority_dict is None:
             priority_dict = {ref_name: 0}
 
+        logger.info(f"Loading GFA file: {gfa_file}")
+        logger.info(f"Parameters: ref_name={ref_name}, priority_dict={priority_dict}")
+
+        if not os.path.exists(gfa_file):
+            msg = f"GFA file not found: {gfa_file}"
+            logger.error(msg)
+            raise FileNotFoundError(msg)
+
+
         G = cls()
+        G.haplo_priorities = {}
+        G.logger = logger
 
         gfa_basename = os.path.basename(gfa_file)
         walk_start_nodes = []
         walk_end_nodes = []
 
-        print("Reading gfa file - first pass: nodes and edges")
-        walks = []
-        for line in read_gfa_line_by_line(gfa_file):
-            if type(line) is GFANodeLine:
-                G.add_binode(line.node_id, line.sequence)
-            if type(line) is GFAEdgeLine:
-                G.add_biedge(line.u, line.v)
+        logger.info(f"Reading GFA file: {gfa_basename}")
+        for line in read_gfa_line_by_line(gfa_file, line_types=['S']):
+            G.add_binode(line.node_id, line.sequence)
 
-        print("Reading gfa file - second pass: walks")
-        for line in read_gfa_line_by_line(gfa_file):
-            if type(line) is not GFAWalkLine:
-                continue
-            hit_reference = line.hap_name == ref_name
+        for line in read_gfa_line_by_line(gfa_file, line_types=['L']):
+            G.add_biedge(line.u, line.v)
+
+
+        if return_walks:
+            G.walks = {}
+
+        for line in read_gfa_line_by_line(gfa_file, line_types=['W', 'P']):
+            # Check if haplotype name starts with ref_name (e.g., 'GRCh38#0#chr20' starts with 'GRCh38')
+            hit_reference = line.sample_name == ref_name
             if hit_reference:
-                assert not G.reference_path, "Reference path already exists"
-                G.add_reference_path(line.walk)
+                if G.reference_path:
+                    warnings.warn("Reference path already exists. Skipping additional reference walks.")
+                else:
+                    G.add_reference_path(line.walk)
 
-            G.update_haplotype_positions(line, priority_dict)
+            # Extract sample#haplotype from hap_name (format: sample#haplotype#contig)
+            if line.sample_name in priority_dict:
+                G.haplo_priorities[line.hap_name] = priority_dict[line.sample_name]
+                G.update_haplotype_positions(line)
 
             if return_walks:
-                walks.append(line.walk)
+                assert G.walks is not None
+                G.walks[line.hap_name] = line.walk
 
             walk_start_nodes.append(line.walk[0])
             walk_end_nodes.append(line.walk[-1])
 
             G.compute_edge_weights([line.walk])
 
-        if log_path:
-            log_action(log_path, f"Reading gfa file: {gfa_basename}")
-
-        print("Num of binodes:", (len(G.nodes) / 2))
-        print("Num of biedges:", (len(G.edges) / 2))
+        logger.info(f"Loaded {len(G.nodes) / 2:.0f} binodes, {len(G.edges) / 2:.0f} biedges")
 
         assign_node_directions(G, G.reference_path)
-        if log_path:
-            log_action(log_path, f"Assigning node directions: {gfa_basename}")
 
         G.add_terminal_nodes(walk_start_nodes=walk_start_nodes, walk_end_nodes=walk_end_nodes)
-        print("Computing reference tree")
-        G.compute_reference_tree()
-        if log_path:
-            log_action(log_path, f"Computing reference tree: {gfa_basename}")
+        logger.info("Computing reference tree")
+        G.compute_reference_tree(dfs_method, haplo_priorities=priority_dict)
 
-        print("Computing branch points")
+        logger.info("Computing branch points")
         G.annotate_branch_points()
-        if log_path:
-            log_action(log_path, f"Computing branch points: {gfa_basename}")
 
-        print("Computing positions")
+        logger.info("Computing positions")
+        G.compute_binode_indices()
         G.compute_binode_positions()
-        print("Computing right positions")
         G.compute_binode_right_positions()
-        if log_path:
-            log_action(log_path, f"Computing positions: {gfa_basename}")
 
-        return (G, walks) if return_walks else G
+        return G
 
+    @classmethod
+    def from_gfa_line_by_line(cls, *args, **kwargs):
+        """Backward compatibility alias for from_gfa."""
+        return cls.from_gfa(*args, **kwargs)
 
     def __init__(self,
                  directed_graph: nx.classes.digraph.DiGraph | None = None,
                  reference_tree: nx.classes.digraph.DiGraph | None = None,
                  reference_path: list[str] | None = None,
-                 variant_edges: set | None = None
+                 variant_edges: set | None = None,
+                 haplo_priorities: dict[str, int] | None = None,
+                 logger: logging.Logger | None = None,
+                 walks: dict[str, list[str]] | None = None
                  ):
         if directed_graph is None:
             directed_graph = nx.DiGraph()
         if reference_tree is None:
             reference_tree = nx.DiGraph()
         super().__init__(directed_graph)
-        self.reference_tree = reference_tree
-        self.reference_path = reference_path if reference_path else []
-        self.variant_edges = variant_edges if variant_edges else set()
+        self.reference_path = reference_path if reference_path is not None else []
+        self.variant_edges = variant_edges if variant_edges is not None else set()
+        self.haplo_priorities = haplo_priorities if haplo_priorities is not None else {}
+        self.logger = logger if logger is not None else logging.getLogger('pantree')
         self.number_of_biedges = np.sum(
             [count_or_not for _, _, count_or_not in directed_graph.edges(data='is_representative')]
         )
+        self.walks = walks if walks is not None else {}
 
     def identify_variant_type(self,
                               edge: tuple[str, str],
-                              ref: str,
-                              alt: str,
+                              ref: str | None = None,
+                              alt: str | None = None,
                               ) -> str:
         var_type = None
         if self.is_inversion(edge):
@@ -246,8 +276,8 @@ class PangenomeGraph(nx.DiGraph):
             if var_type is not None:
                 raise KeyError(f'Variant, {edge}, has dual type.')
             var_type = 'DEL'
-
         assert var_type is not None
+
         return var_type
 
     def is_inversion(self, edge: tuple[str, str]) -> bool:
@@ -284,8 +314,8 @@ class PangenomeGraph(nx.DiGraph):
 
     def is_insertion(self,
                      edge: tuple[str, str],
-                     ref: str = None,
-                     alt: str = None,
+                     ref: str | None = None,
+                     alt: str | None = None,
                      ) -> bool:
         if not self.is_crossing_edge(edge):
             return False
@@ -295,8 +325,8 @@ class PangenomeGraph(nx.DiGraph):
 
     def is_replacement(self,
                        edge: tuple[str, str],
-                       ref: str = None,
-                       alt: str = None,
+                       ref: str | None = None,
+                       alt: str | None = None,
                        ) -> bool:
         if not self.is_crossing_edge(edge):
             return False
@@ -306,8 +336,8 @@ class PangenomeGraph(nx.DiGraph):
 
     def is_snp(self,
                edge: tuple[str, str],
-               ref: str = None,
-               alt: str = None,
+               ref: str | None = None,
+               alt: str | None = None,
                ) -> bool:
         if not self.is_crossing_edge(edge):
             return False
@@ -317,8 +347,8 @@ class PangenomeGraph(nx.DiGraph):
 
     def is_mnp(self,
                edge: tuple[str, str],
-               ref: str = None,
-               alt: str = None,
+               ref: str | None = None,
+               alt: str | None = None,
                ) -> bool:
         if not self.is_crossing_edge(edge):
             return False
@@ -385,7 +415,7 @@ class PangenomeGraph(nx.DiGraph):
         self.nodes[minus_terminus + '_+']['position'] = chromosome_length
         self.nodes[minus_terminus + '_-']['position'] = chromosome_length
 
-    def compute_reference_tree(self):
+    def compute_reference_tree(self, dfs_method: Callable = dfs_methods['max_weight'], **kwargs):
         """
         Computes the reference tree, a DFS spanning tree of the positively-oriented subgraph; defines variant edges
         as those that are not in the reference tree or its complement.
@@ -393,7 +423,7 @@ class PangenomeGraph(nx.DiGraph):
         # reference tree contains positive-direction nodes only, and no inversion edges
         # self.add_biedge(self.reference_path[0], self.reference_path[1])
         positive_subgraph = self.subgraph([n for n, direction in self.nodes(data="direction") if direction == 1])
-        self.reference_tree = max_weight_dfs_tree(positive_subgraph, reference_path=self.reference_path)
+        self.reference_tree = dfs_method(positive_subgraph, reference_path=self.reference_path, **kwargs)
 
         for edge in positive_subgraph.edges():
             edge_in_tree = self.reference_tree.has_edge(*edge)
@@ -404,14 +434,17 @@ class PangenomeGraph(nx.DiGraph):
         self.variant_edges = {(u, v) for u, v, data in self.edges(data=True)
                               if data['is_representative'] and not data['is_in_tree']}
 
+    def get_reference_edges(self) -> dict[tuple[str, str], tuple[str, str]]:
+        """Returns a dictionary mapping variant edges to their references edges."""
+        return {e: self.representative_edge(self.reference_tree_edge(e)) for e in self.variant_edges}
+
     def write_vcf(self,
                   gfa_path: Optional[str],
                   vcf_filename: str,
                   chr_name: str,
                   exclude_terminus: bool = True,
-                  size_threshold: int = None,
+                  size_threshold: float = float('inf'),
                   check_degenerate: bool = False,
-                  log_path: str = None
                   ) -> None:
         """
         Writes the variant call format (vcf) file.
@@ -420,371 +453,55 @@ class PangenomeGraph(nx.DiGraph):
         :param chr_name: the chromosome name in the first column of output vcf file
         :param size_threshold: the truncation length of ref and alt sequence
         :param check_degenerate: whether to exclude variants whose ref and alt alleles are identical
+        :param log_path: path to log file
         :return:
         """
-        if log_path:
-            log_action(log_path, f"Start generating vcf")
-        # 'CHROM', 'POS', 'ID', 'REF', 'ALT', 'QUAL', 'FILTER', 'INFO', 'FORMAT', 'sample1', 'sample2', ...
-        meta_info = f'##fileformat=VCFv4.2\n'
-        meta_info += f'##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">\n'
-        meta_info += f'##FORMAT=<ID=CR,Number=.,Type=Integer,Description="The reference allele count for each sample\'s haplotypes">\n'
-        meta_info += f'##FORMAT=<ID=CA,Number=.,Type=Integer,Description="The alternative allele count for each sample\'s haplotypes">\n'
-        meta_info += f'##INFO=<ID=NR,Number=1,Type=String,Description="Non-reference allele">\n'
-        meta_info += f'##INFO=<ID=VT,Number=1,Type=String,Description="Variant type">\n'
-        meta_info += f'##INFO=<ID=DR,Number=2,Type=Integer,Description="Distance from reference (variant edge\'s two nodes)">\n'
-        meta_info += f'##INFO=<ID=RC,Number=1,Type=Integer,Description="The REF allele count">\n'
-        meta_info += f'##INFO=<ID=AC,Number=A,Type=Integer,Description="The ALT allele count">\n'
-        meta_info += f'##INFO=<ID=AN,Number=1,Type=Integer,Description="Total number of alleles in called genotypes">\n'
-        meta_info += f'##INFO=<ID=PV,Number=2,Type=Integer,Description="Position of variant edge\'s two nodes">\n'
-        meta_info += f'##INFO=<ID=TR_MOTIF,Number=1,Type=String,Description="Tandem repeat motif">\n'
-        meta_info += f'##INFO=<ID=NIA,Number=1,Type=Integer,Description="Nearly identical alleles (1=yes, 0=no)">\n'
-        meta_info += f'##contig=<ID={chr_name}>\n'
+        # Use graph's logger, or create one if log_path provided
+        write_vcf_from_graph(
+            graph=self,
+            gfa_path=gfa_path,
+            vcf_filename=vcf_filename,
+            chr_name=chr_name,
+            logger=self.logger,
+            exclude_terminus=exclude_terminus,
+            size_threshold=size_threshold,
+            check_degenerate=check_degenerate,
+        )
 
-        allele_count_dict = self.allele_count()
+    def genotype(self, walk: list[str], exclude_terminus: bool=True) -> Genotype:
+        """
+        Compute the phased genotype data for a single walk.
+        """
+        return Genotype.genotype(self, walk, exclude_terminus)
 
-        sample_cr_dict = defaultdict(dict)
-        sample_ca_dict = defaultdict(dict)
-        sample_lc_dict = defaultdict(list)
-
-        sample_vcf_info_dict = dict()
-
-        sample_ids = []
-        # Memory efficient way to read gfa data
-        # Supports both W-lines (GFA1.1) and P-lines (GFA1.0)
-        if gfa_path:
-            print("Computing genotype for haplotypes")
-            pre_sample_name = None
-            for line in read_gfa_line_by_line(gfa_path):
-                if type(line) is not GFAWalkLine:
-                    continue
-                walk = line.walk
-                haplotype_name = line.hap_name
-                sample_name = line.hap_name.split('_')[0]
-                if pre_sample_name is not None and sample_name != pre_sample_name:
-                    # print("Sample:", pre_sample_name, sample_name)
-                    # print_current_memory_usage()
-                    assert sample_name not in sample_vcf_info_dict
-                    sample_missing_dict = {hap: set(self.get_missing_variants(lc, exclude_terminus)) for hap, lc in
-                                           sample_lc_dict.items()}
-                    sample_info_list = self.get_sample_vcf_info(pre_sample_name,
-                                                                sample_cr_dict,
-                                                                sample_ca_dict,
-                                                                sample_missing_dict,
-                                                                exclude_terminus=exclude_terminus)
-                    sample_vcf_info_dict[pre_sample_name] = sample_info_list
-
-                    sample_cr_dict.clear()
-                    sample_ca_dict.clear()
-                    sample_lc_dict.clear()
-
-                cr_dict, ca_dict, linear_coverage = self.genotype(walk, return_linear_coverage=True)
-
-                sample_cr_dict[haplotype_name] = merge_dicts([sample_cr_dict[haplotype_name], cr_dict])
-                sample_ca_dict[haplotype_name] = merge_dicts([sample_ca_dict[haplotype_name], ca_dict])
-
-                sample_lc_dict[haplotype_name].append(linear_coverage)
-
-                pre_sample_name = sample_name
-
-            sample_missing_dict = {hap: set(self.get_missing_variants(lc, exclude_terminus)) for hap, lc in
-                                sample_lc_dict.items()}
-            sample_info_list = self.get_sample_vcf_info(sample_name,
-                                                        sample_cr_dict,
-                                                        sample_ca_dict,
-                                                        sample_missing_dict,
-                                                        exclude_terminus=exclude_terminus
-                                                        )
-            sample_vcf_info_dict[sample_name] = sample_info_list
-
-            sample_cr_dict.clear()
-            sample_ca_dict.clear()
-            sample_lc_dict.clear()
-
-            if log_path:
-                log_action(log_path, f"Reading gfa, computing genotype and missing variants for haplotypes: {gfa_path}")
-
-            sample_ids = sorted(sample_vcf_info_dict.keys())
-
-
-        header_names = list(self.vcf_attribute_names) + sample_ids
-
-        print("Writing vcf file")
-        with open(vcf_filename, 'w') as file:
-            file.write(meta_info)
-            file.write('#'+'\t'.join(header_names) + '\n')
-
-            for idx, (u, v) in tqdm(enumerate(self.sorted_variant_edges(exclude_terminus=exclude_terminus))):
-                representative_variant_edge = (u, v)
-
-                if self.direction(u) == -1 and self.direction(v) == -1:
-                    u, v = edge_complement((u, v))
-                edge = (u, v)
-
-                ref_allele, alt_allele, last_letter_of_branch_point, branch_point = self.ref_alt_alleles(edge)
-                VT = self.identify_variant_type(edge, ref_allele, alt_allele)
-
-                motif = self.annotate_repeat_motif(representative_variant_edge,
-                                                   ref_allele=ref_allele,
-                                                   alt_allele=alt_allele,
-                                                   branch_point=branch_point)
-                motif = '.' if motif is None else motif
-
-
-                if check_degenerate:
-                    if ref_allele == alt_allele:
-                        continue
-
-                prepend_letter_to_alleles = (len(ref_allele) == 0 or len(alt_allele) == 0)
-
-                new_ref = '.'
-                ref_allele_on_forward_reference_path = self.direction(edge[0]) == 1 and self.on_reference_path(edge)
-                if not ref_allele_on_forward_reference_path:
-                    new_ref = ref_allele
-                    ref_allele = '.'
-                    prepend_letter_to_alleles = False
-
-                if prepend_letter_to_alleles:
-                    ref_allele = last_letter_of_branch_point + ref_allele
-                    alt_allele = last_letter_of_branch_point + alt_allele
-
-                if size_threshold:
-                    ref_allele = ref_allele[:size_threshold]
-                    alt_allele = alt_allele[:size_threshold]
-
-                edge_vcf_position = self.get_vcf_position(edge, prepend_letter_to_alleles)
-
-                allele_data_list = []
-                # 'CHROM' 0
-                allele_data_list.append(chr_name)
-                # 'POS' 1
-                allele_data_list.append(str(edge_vcf_position))
-                # 'ID' 2
-                allele_data_list.append(''.join(tuple(map(lambda x: _node_recover(x), edge))))
-                # 'REF' 3
-                allele_data_list.append(ref_allele if ref_allele else '.')
-                # 'ALT' 4
-                allele_data_list.append(alt_allele if alt_allele else '.')
-                # 'QUAL' 5
-                allele_data_list.append('60')
-                # 'FILTER' 6
-                allele_data_list.append('PASS')
-                # 'INFO' 7
-                allele_data_list.append(None)
-                # 'FORMAT' 8
-                allele_data_list.append('GT:CR:CA')
-
-                # 'sample1', 'sample2', ... 9 - end
-                for sample_name in sample_ids:
-                    counts = sample_vcf_info_dict[sample_name][idx]
-                    allele_data_list.append(counts)
-
-                RC = allele_count_dict[representative_variant_edge][0] if not self.is_inversion(edge) else '.'
-                AC = allele_count_dict[representative_variant_edge][1]
-
-                AN = RC + AC if not self.is_inversion(edge) else '.'
-
-                INFO = (f'NR={new_ref if new_ref else "."};'
-                        f'VT={VT};'
-                        f'DR={int(self.nodes[u]["distance_from_reference"])},{int(self.nodes[v]["distance_from_reference"])};'
-                        f'RC={RC};'
-                        f'AC={AC};'
-                        f'AN={AN};'
-                        f'PV={int(self.nodes[u]["position"])},{int(self.nodes[v]["position"])};'
-                        f'TR_MOTIF={motif}')
-
-                if nearly_identical_alleles(ref_allele, alt_allele):
-                    INFO += ';NIA=1'
-                else:
-                    INFO += ';NIA=0'
-
-                allele_data_list[7] = INFO
-
-                file.write('\t'.join(allele_data_list) + '\n')
-        if log_path:
-            log_action(log_path, f"Writing vcf: {vcf_filename}")
-
-    def get_sample_vcf_info(self,
-                            sample_name,
-                            sample_cr_dict,
-                            sample_ca_dict,
-                            sample_missing_dict,
-                            exclude_terminus=True
-                            ):
-        sample_vcf_info = []
-        for u, v in self.sorted_variant_edges(exclude_terminus=exclude_terminus):
-            representative_variant_edge = (u, v)
-            representative_ref_edge = self.representative_edge(self.reference_tree_edge(representative_variant_edge))
-
-            if self.direction(u) == -1 and self.direction(v) == -1:
-                u, v = edge_complement((u, v))
-            edge = (u, v)
-
-            if sample_name.startswith(("CHM", "GRCh")):
-                haplotype_name = sample_name + '_0'
-                cr_0 = sample_cr_dict[haplotype_name].get(representative_ref_edge, 0) if not self.is_inversion(edge) else '.'
-                ca_0 = sample_ca_dict[haplotype_name].get(representative_variant_edge, 0)
-
-                count = ['.', '.', '.']
-                if haplotype_name in sample_missing_dict and representative_variant_edge not in sample_missing_dict[haplotype_name]:
-                    count[0] = int(bool(ca_0)) if cr_0 != 0 or ca_0 != 0 else '.'
-                    count[1] = cr_0
-                    count[2] = ca_0
-                counts = f"{count[0]}:{count[1]}:{count[2]}"
+    def genotypes_from_gfa(self, gfa_path: str, exclude_terminus: bool=True) -> dict[str, tuple[Genotype]]:
+        """
+        Compute the phased genotype data for each sample in a GFA file. There can be 1 or 2 haplotypes
+        per sample, which are stored in a tuple. There can be any positive number of walks per haplotype,
+        which are aggregated together.
+        """
+        self.logger.info("Computing genotype for haplotypes")
+        genotype_dict: dict[str, Genotype] = {}
+        names = defaultdict(set)
+        for line in read_gfa_line_by_line(gfa_path, line_types=['W', 'P']):
+            walk = line.walk
+            haplotype_name = '#'.join(line.hap_name.split('#')[:2])
+            names[line.sample_name].add(haplotype_name)
+            genotype: Genotype = self.genotype(walk, exclude_terminus)
+            if haplotype_name in genotype_dict:
+                genotype_dict[haplotype_name].update(genotype)
             else:
-                haplotype1_name = sample_name + '_1'
-                haplotype2_name = sample_name + '_2'
+                genotype_dict[haplotype_name] = genotype
 
-                cr_1 = sample_cr_dict[haplotype1_name].get(representative_ref_edge, 0) if not self.is_inversion(edge) else '.'
-                ca_1 = sample_ca_dict[haplotype1_name].get(representative_variant_edge, 0)
+        for _, genotype in genotype_dict.items():
+            genotype.compute_missing_variants(self)
 
-                cr_2 = sample_cr_dict[haplotype2_name].get(representative_ref_edge, 0) if not self.is_inversion(edge) else '.'
-                ca_2 = sample_ca_dict[haplotype2_name].get(representative_variant_edge, 0)
+        result = {}
+        for sample_name, haplo_names in names.items():
+            assert len(haplo_names) in (1,2), "Samples should be haploid or diploid"
+            result[sample_name] = tuple(genotype_dict[name] for name in haplo_names)
 
-                count_1 = ['.', '.', '.']
-                if haplotype1_name in sample_missing_dict and representative_variant_edge not in sample_missing_dict[haplotype1_name]:
-                    count_1[0] = int(bool(ca_1)) if cr_1 != 0 or ca_1 != 0 else '.'
-                    count_1[1] = cr_1
-                    count_1[2] = ca_1
-
-                count_2 = ['.', '.', '.']
-                if haplotype2_name in sample_missing_dict and representative_variant_edge not in sample_missing_dict[haplotype2_name]:
-                    count_2[0] = int(bool(ca_2)) if cr_2 != 0 or ca_2 != 0 else '.'
-                    count_2[1] = cr_2
-                    count_2[2] = ca_2
-                counts = f"{count_1[0]}|{count_2[0]}:{count_1[1]},{count_2[1]}:{count_1[2]},{count_2[2]}"
-            sample_vcf_info.append(counts)
-        return sample_vcf_info
-
-    def write_tree(self, filename: str) -> list:
-        """
-        Writes the reference tree in a format such that it can be traversed without being loaded into memory.
-        :param filename: save file path, ending by convention in .tree
-        :return: order in which nodes were recorded in the file
-        """
-        with open(filename, 'w') as file:
-            line_in_file = {}
-
-            def write_node(node):
-                if self.reference_tree.in_degree[node] == 0:
-                    parent_position_in_file = -1
-                else:
-                    parent = self.parent_in_tree(node)
-                    parent_position_in_file = line_in_file[parent] if parent else -1
-                node_sequence = self.nodes[node]['sequence']
-                file.write(f"{node},{parent_position_in_file},{node_sequence}\n")
-
-            order = list(nx.topological_sort(self.reference_tree))
-            for line, u in enumerate(order):
-                write_node(u)
-                line_in_file[u] = line
-
-            return order
-
-    def write_edgeinfo(self, filename: str) -> None:
-        """
-        Writes information computed about each edge such that it can be retrieved without re-computing it.
-        :param filename: save file path, ending by convention in .edgeinfo
-        """
-        def to_string(edge_attribute):
-            if type(edge_attribute) is bool:
-                return '1' if edge_attribute else '0'
-            return str(edge_attribute)
-
-        with open(filename, 'w') as file:
-            # Write the header row
-            file.write(','.join(self.biedge_attribute_names) + '\n')
-
-            # Sort the edges by 'index' attribute, restricting to representatives
-            sorted_edges = self.sorted_biedge_representatives
-
-            for n, edge in enumerate(sorted_edges):
-                _, _, data = edge
-                assert n == data['index'], 'Something is wrong with edge indices'
-                # Write the edge information to the file; map True->'1', False->'0'
-                edge_data_list = [to_string(data[key]) for key in self.biedge_attribute_names]
-                file.write(','.join(edge_data_list) + '\n')
-
-    def write_nodeinfo(self, filename: str) -> None:
-        """
-        Writes information about each node such that it can be retrieved without re-computing it.
-        :param filename: save file path, ending by convention in .nodeinfo
-        """
-        attributes = [attribute for attribute in self.node_attribute_names if attribute != 'sequence']
-        with open(filename, 'w') as file:
-            file.write('node,')
-            file.write(','.join(attributes) + '\n')
-
-            for node, data in self.nodes(data=True):
-                if self.is_terminal(node):
-                    continue
-                file.write(f'{node},')
-                file.write(','.join([str(data[key]) for key in attributes]) + '\n')
-
-    def read_edgeinfo(self, filename: str) -> None:
-        def from_string(s: str):
-            try:
-                float(s)
-                return float(s)
-            except ValueError:
-                return s
-
-        sorted_edges = self.sorted_biedge_representatives
-
-        # Read the file
-        with open(filename, 'r') as file:
-            header = next(file).strip().split(',')
-            for n, line in enumerate(file):
-                # Split the line into components
-                parts = line.strip().split(',')
-
-                # Find the edge represenative with index == n
-                edge = sorted_edges[n][:-1]
-                assert self.edges[edge]['index'] == n
-
-                # Extract the edge info
-                for i, key in enumerate(self.biedge_attribute_names):
-                    self.edges[edge][key] = from_string(parts[i])
-                    self.edges[edge_complement(edge)][key] = from_string(parts[i])
-
-        # Define variant edge representatives
-        self.variant_edges = {(u, v) for u, v, data in self.edges(data=True)
-                              if data['is_representative'] and not data['is_in_tree']}
-
-        # Define reference tree
-        for u, v, is_in_tree in self.edges(data='is_in_tree'):
-            if not is_in_tree:
-                continue
-
-            # Only include forward direction nodes
-            if self.direction(u) == 1:
-                self.reference_tree.add_edge(u, v)
-
-        # Connect non-terminus roots of the reference tree (forest) with terminus
-        root = self.termini[0] + '_+'
-        source_nodes = [node for node, in_degree in self.reference_tree.in_degree if in_degree == 0]
-        for source_node in source_nodes:
-            if source_node == root:
-                continue
-            assert not self.reference_tree.has_edge(root, source_node)
-            self.reference_tree.add_edge(root, source_node)
-
-    def read_nodeinfo(self, filename: str) -> None:
-        def from_string(s: str):
-            try:
-                float(s)
-                return float(s)
-            except ValueError:
-                return s
-
-        with open(filename, 'r') as file:
-            line = next(file).strip().split(',')
-            attributes = {key: idx for idx, key in enumerate(line) if key != 'node'}
-            for line in file:
-                parts = line.strip().split(',')
-                node = parts[0]
-                for key, idx in attributes.items():
-                    self.nodes[node][key] = from_string(parts[idx])
-
+        return result
 
     def add_binode(self, binode: str, seq: str = ''):
         """
@@ -806,7 +523,9 @@ class PangenomeGraph(nx.DiGraph):
         Adds a biedge to the bidirected graph, comprising an edge and its complement.
         """
         if self.has_edge(node1, node2):
-            raise ValueError(f'Attempted to add duplicate biedge: {node1}, {node2}')
+            msg = f'Attempted to add duplicate biedge: {node1}, {node2}'
+            self.logger.error(msg)
+            raise ValueError(msg)
 
         edge_data = {key: 0 for key in self.biedge_attribute_names}
         edge_data['weight'] = weight
@@ -836,7 +555,7 @@ class PangenomeGraph(nx.DiGraph):
     def positive_variant_edge(self, edge: tuple):
         return edge if self.direction(edge[0]) == 1 or self.is_inversion(edge) else edge_complement(edge)
 
-    def update_haplotype_positions(self, line: GFAWalkLine, priority_dict: dict[str, int]) -> None:
+    def update_haplotype_positions(self, line: GFAWalkLine) -> None:
         """
         For each edge (u->v) in the walks, store:
         primary_edge_pos = ((hap_id, contig_name, walk_id), position_bp)
@@ -846,23 +565,12 @@ class PangenomeGraph(nx.DiGraph):
 
         walk = line.walk
         hap_name = line.hap_name
-        hap_rank = priority_dict.get(hap_name, 999)
         offset = line.contig_start
 
-        for u, v in zip(walk[:-1], walk[1:]):
-            if (u, v) not in self.edges:
-                raise ValueError(f'Edge {u} -> {v} not found in graph')
-            seq_u: str = self.nodes[u].get("sequence")
-            if seq_u is None:
-                raise ValueError(f'Node {u} has no sequence')
-            offset += len(seq_u)
-
-            edges = (self.edges[u, v], self.edges[*edge_complement((u, v))])
-            for ed in edges:
-                current_position = ed.get("primary_edge_pos")
-                if current_position is None or hap_rank < priority_dict.get(current_position[0], 1000):
-                    ed["primary_edge_pos"] = (hap_name, offset)
-
+        for u in walk:
+            offset += len(self.nodes[u]['sequence'])
+            self.nodes[u][hap_name] = offset
+            self.nodes[node_complement(u)][hap_name] = offset
 
     def compute_edge_weights(self, walks: list[list[str]]):
         """
@@ -916,25 +624,6 @@ class PangenomeGraph(nx.DiGraph):
     def direction(self, node: str) -> int:
         return self.nodes[node]['direction']
 
-    def get_vcf_position(self,
-                         edge: tuple,
-                         prepend_letter_to_alleles: bool = None,
-                         ) -> int:
-        """The VCF position of a variant is offset by 1 compared with the ordinary position, except
-        variants that by convention have the last letter of the branch point prepended to their ref
-        and their alt allele."""
-        edge = self.positive_variant_edge(edge)
-        u, v = edge
-
-        if prepend_letter_to_alleles is None:
-            ref_allele, alt_allele, last_letter_of_branch_point, branch_point = self.ref_alt_alleles(edge)
-            prepend_letter_to_alleles = (len(ref_allele) == 0 or len(alt_allele) == 0)
-
-            ref_allele_on_forward_reference_path = self.direction(edge[0]) == 1 and self.on_reference_path(edge)
-            if not ref_allele_on_forward_reference_path:
-                prepend_letter_to_alleles = False
-
-        return self.position(u) + 1 - int(prepend_letter_to_alleles)
 
     def walk_sequence(self, walk: list[str]) -> str:
         seq = ''
@@ -986,7 +675,9 @@ class PangenomeGraph(nx.DiGraph):
         """
 
         if self.is_in_tree(variant_edge):
-            raise ValueError("Ref and alt alleles are only defined for variant edges")
+            msg = "Ref and alt alleles are only defined for variant edges"
+            self.logger.error(msg)
+            raise ValueError(msg)
 
         u, v = variant_edge
         branch_point = self.edges[u, v]['branch_point']
@@ -1005,76 +696,6 @@ class PangenomeGraph(nx.DiGraph):
 
         return ref_allele, alt_allele, last_letter_of_branch_point, branch_point
 
-    def genotype_and_linear_coverage_by_sample(self, walks) -> tuple[dict, dict, list]:
-        """
-        Integrates the genotype of each sample from the genotype of each walk.
-        :param walks: list of walks for each sample
-        :return:
-        """
-        cr_dict_haplotype = dict()
-        ca_dict_haplotype = dict()
-        linear_coverages = []
-
-        for walk in walks:
-            cr_ca_dicts, linear_coverage = self.genotype(walk, return_linear_coverage=True)
-            cr_dict_walk, ca_dict_walk = cr_ca_dicts[0], cr_ca_dicts[1]
-            for edge, count in cr_dict_walk.items():
-                if edge in cr_dict_haplotype:
-                    cr_dict_haplotype[edge] += count
-                else:
-                    cr_dict_haplotype[edge] = count
-            for edge, count in ca_dict_walk.items():
-                if edge in ca_dict_haplotype:
-                    ca_dict_haplotype[edge] += count
-                else:
-                    ca_dict_haplotype[edge] = count
-            linear_coverages.append(linear_coverage)
-
-        return cr_dict_haplotype, ca_dict_haplotype, linear_coverages
-
-
-    def genotype(self, walk: list[str], return_linear_coverage: bool = False):
-        """
-        Computes the number of time that a walk visits each variant edge.
-        :param walk: list of nodes
-        :param return_linear_coverage: if True, returns a tuple of the genotype dictionary and the min position/max right position of nodes on the walk
-        :return: dictionary of edge-count pairs, optionally the linear coverage
-        """
-
-        # Append start and end nodes to walk
-        start = [self.termini[0] + '_+' if self.direction(walk[0]) == 1 else self.termini[1] + '_-']
-        end = [self.termini[1] + '_+' if self.direction(walk[-1]) == 1 else self.termini[0] + '_-']
-        walk = start + walk + end
-
-        if not hasattr(self, 'ref_edge_set'):
-            self.ref_edge_set = {self.representative_edge(self.reference_tree_edge(var_edge))
-                                 for var_edge in self.sorted_variant_edges(exclude_terminus=False)}
-
-        ref_edge_set = self.ref_edge_set
-
-        count_ref = {}
-        count_alt = {}
-        min_pos = inf
-        max_pos = -inf
-        for e in zip(walk[:-1], walk[1:]):
-            if not self.has_edge(*e):
-                raise ValueError(f"Specified list contains edge {e} which is not present in the graph")
-
-            if not self.edges[e]['is_representative']:
-                e = edge_complement(e)
-
-            if not self.is_terminal(e[0]) and min(*self.position(e)) < min_pos:
-                min_pos = min(*self.position(e))
-            if not self.is_terminal(e[1]) and max(*self.right_position(e)) > max_pos:
-                max_pos = max(*self.right_position(e))
-
-            if self.edges[e]['is_in_tree']:
-                if e in ref_edge_set:
-                    count_ref[e] = count_ref.get(e, 0) + 1
-            else:
-                count_alt[e] = count_alt.get(e, 0) + 1
-
-        return (count_ref, count_alt, (min_pos, max_pos)) if return_linear_coverage else (count_ref, count_alt)
 
     def count_edge_visits(self, genotype: dict) -> dict:
         """
@@ -1090,7 +711,9 @@ class PangenomeGraph(nx.DiGraph):
         # Add variant edge endpoints as sources or sinks depending on their respective directions
         for variant_edge, visit_count in genotype.items():
             if variant_edge not in self.variant_edges:
-                raise ValueError("geno dictionary contains a key which is not a variant edge")
+                msg = "geno dictionary contains a key which is not a variant edge"
+                self.logger.error(msg)
+                raise ValueError(msg)
 
             u, v = variant_edge
             new_sinks = []
@@ -1105,7 +728,7 @@ class PangenomeGraph(nx.DiGraph):
                 new_sinks.append(node_complement(v))
 
             for w in new_sources:
-                sources[w] = sources.get(w, 0) + 1
+                sources[w] = sources.get(w, 0) + visit_count
 
             sinks += visit_count * new_sinks
 
@@ -1126,7 +749,9 @@ class PangenomeGraph(nx.DiGraph):
             sources[self.termini[0] + '_+'] = 2
 
         else:
-            raise ValueError("The input genotype does not correspond to any valid walk")
+            msg = "The input genotype does not correspond to any valid walk"
+            self.logger.error(msg)
+            raise ValueError(msg)
 
         edge_visits = genotype.copy()
         for sink in sinks:
@@ -1135,7 +760,9 @@ class PangenomeGraph(nx.DiGraph):
             while sources.get(current_node, 0) == 0:
                 # If current_node is the root, it means that the input genotype was invalid
                 if self.reference_tree.in_degree(current_node) == 0:
-                    raise ValueError("The input genotype does not correspond to any valid walk")
+                    msg = "The input genotype does not correspond to any valid walk"
+                    self.logger.error(msg)
+                    raise ValueError(msg)
 
                 previous_node = current_node
                 current_node = self.parent_in_tree(current_node)
@@ -1158,57 +785,55 @@ class PangenomeGraph(nx.DiGraph):
 
         return {e: _allele_length(e) for e in self.sorted_variant_edges(exclude_terminus=False)}
 
-    def allele_count(self) -> dict:
+    def compute_binode_indices(self):
         """
-        Computes alt and total allele counts, defined as the number of times that a walk visits a variant
-        edge (u,v) and the corresponding branch point w.
-        :return: dictionary mapping variant edges to (ref_count, alt_count) pairs
+        Computes the topological sort of the binodes according to the DAG whose nodes are positive-direction
+        nodes and whose edges are not back edges nor inversions.
         """
-        # TODO handles inversions correctly?
-        return {e: (self.edges[self.reference_tree_edge(e)]['weight'], self.edges[e]['weight'])
-                for e in self.sorted_variant_edges(exclude_terminus=False)}
+        positive_subgraph = self.subgraph([n for n, direction in self.nodes(data="direction") if direction == 1])
+        positive_subgraph_no_cycle = self.edge_subgraph([edge for edge in positive_subgraph.edges() if not self.is_back_edge(edge)])
+        order = nx.topological_sort(positive_subgraph_no_cycle)
+        for i, node in enumerate(order):
+            self.nodes[node]['index'] = i
+            self.nodes[node_complement(node)]['index'] = i
+
+
 
     def compute_binode_positions(self):
         """
-        Computes the position of each binode along the linear reference path, as well as the distance from the linear
-        reference, in basepairs.
+        Computes the position of each binode along the linear reference path, as well as the tree position
+        (distance from reference plus the position of the node's ancestor on the reference path), in basepairs.
         """
-        for node in self.reference_tree.nodes():
-            self.nodes[node]['distance_from_reference'] = inf  # contigs not reachable from reference are at distance infinity
-
         current_position = 0
         for u in self.reference_path:
             current_position += len(self.nodes[u]['sequence'])
             self.nodes[u]['position'] = current_position
-            self.nodes[u]['distance_from_reference'] = 0
+            self.nodes[u]['tree_position'] = current_position
             self.nodes[node_complement(u)]['position'] = current_position
-            self.nodes[node_complement(u)]['distance_from_reference'] = 0
+            self.nodes[node_complement(u)]['tree_position'] = current_position
 
-        order = list(nx.topological_sort(self.reference_tree))
-        for u in order[1:]: # skip the root
+        for u in self.sorted_positive_nodes:
             if self.nodes[u]['on_reference_path']:
                 continue
-
             predecessor = self.parent_in_tree(u)
+            assert predecessor is not None
             self.nodes[u]['position'] = self.nodes[predecessor]['position']
             self.nodes[node_complement(u)]['position'] = self.nodes[u]['position']
 
-            self.nodes[u]['distance_from_reference'] = (self.nodes[predecessor]['distance_from_reference'] +
-                                                        len(self.nodes[u]['sequence']))
-            self.nodes[node_complement(u)]['distance_from_reference'] = self.nodes[u]['distance_from_reference']
+            self.nodes[u]['tree_position'] = (self.nodes[predecessor]['tree_position'] +
+                                              len(self.nodes[u]['sequence']))
+            self.nodes[node_complement(u)]['tree_position'] = self.nodes[u]['tree_position']
 
     def compute_binode_right_positions(self):
         """Computes the right position of each binode, defined as the minimum position of its successors in the
         positive subgraph minus back edges."""
-        positive_subgraph = self.subgraph([n for n, direction in self.nodes(data="direction") if direction == 1])
-        positive_subgraph_no_cycle = self.edge_subgraph([edge for edge in positive_subgraph.edges() if not self.is_back_edge(edge)])
-        order = nx.topological_sort(positive_subgraph_no_cycle)
+        order = self.sorted_positive_nodes
         for u in reversed(list(order)):
             if self.on_reference_path(u):
                 self.nodes[u]['right_position'] = self.nodes[u]['position']
                 self.nodes[node_complement(u)]['right_position'] = self.nodes[node_complement(u)]['position']
                 continue
-            successor_positions = [self.right_position(v) for v in positive_subgraph.successors(u)]
+            successor_positions = [self.right_position(v) for v in self.successors(u)]
             self.nodes[u]['right_position'] = np.min(successor_positions)
             self.nodes[node_complement(u)]['right_position'] = self.nodes[u]['right_position']
 
@@ -1249,18 +874,24 @@ class PangenomeGraph(nx.DiGraph):
         """
 
         if len(variants) != 2:
-            raise ValueError("Expected exactly 2 variants in the variant list")
+            msg = "Expected exactly 2 variants in the variant list"
+            self.logger.error(msg)
+            raise ValueError(msg)
 
         if any([self.is_back_edge(edge) for edge in variants]):
             return "not_triallelic"
 
         if self.is_inversion(variants[0]) != self.is_inversion(variants[1]):
-           raise ValueError("Found an inversion and a non-inversion in the variant list")
+            msg = "Found an inversion and a non-inversion in the variant list"
+            self.logger.error(msg)
+            raise ValueError(msg)
 
         endpoint_nodes = [node + '_+' for node in endpoint_binodes]
         endpoint_nodes += [node + '_-' for node in endpoint_binodes]
         if not all([self.has_node(node) for node in endpoint_nodes]):
-            raise ValueError("One or more of the endpoint nodes is not in the graph")
+            msg = "One or more of the endpoint nodes is not in the graph"
+            self.logger.error(msg)
+            raise ValueError(msg)
 
         # Detect which node of each binode demarcates the superbubble
         variant_branch_points = [self.edges[e]['branch_point'] for e in variants]
@@ -1317,30 +948,6 @@ class PangenomeGraph(nx.DiGraph):
         # e.g., [(0,1), (0,2), (1,2), (1,3), (2,3)] with variant edges [(0,2), (1,3)]
         return 'interlocking'
 
-
-    def get_missing_variants(self,
-                             linear_coverages: list[tuple],
-                             exclude_terminus: bool=True) -> list:
-        """
-        Computes variant edges that are missing from a haplotype.
-        :param linear_coverages: minimum and maximum positions of each walk in a haplotype."""
-
-        # order walks and variants by position
-        source_positions = np.sort([x[1] for x in linear_coverages] + [self.position('+_terminus_+')])
-        sink_positions = np.sort([x[0] for x in linear_coverages] + [self.right_position('-_terminus_+')])
-        sorted_variant_edges = self.sorted_variant_edges(exclude_terminus=exclude_terminus)
-        sorted_variant_positions = [min(*self.position(e)) for e in sorted_variant_edges]
-
-        result = []
-        for source, sink in zip(source_positions, sink_positions):
-            # indices of first and last variant edges u,v s.t. position of u in between source and sink
-            first = np.searchsorted(sorted_variant_positions, source, side='left')
-            last = np.searchsorted(sorted_variant_positions, sink, side='right')
-            for i in range(first, last):
-                if max(*self.right_position(sorted_variant_edges[i])) <= sink:
-                    result.append(sorted_variant_edges[i])
-
-        return result
 
 
     def _match_sequence_up_tree(self, sequence: str, node: str) -> bool:

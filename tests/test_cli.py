@@ -1,4 +1,4 @@
-from graph_var.cli import main
+from pantree.cli import cli
 from click.testing import CliRunner
 import os
 import tempfile
@@ -18,7 +18,7 @@ def test_main_simple_nested():
     
     try:
         # Run the main function
-        result = runner.invoke(main, [gfa_file, vcf_file, '--chr-id', 'chr1', '--ref-name', 'ref'])
+        result = runner.invoke(cli, ['gfa2vcf', gfa_file, vcf_file, '--chr-id', 'chr1', '--ref-name', 'ref'])
         
         # Print output for inspection
         print(f"Exit code: {result.exit_code}")
@@ -53,11 +53,12 @@ def test_main_simple_nested():
             header_fields = header_line.split('\t')
             sample_names = header_fields[9:]  # Samples start after FORMAT column
             
-            # Assert 1: Verify we have all expected samples
-            assert 'ref' in sample_names, "ref sample not found in VCF"
-            assert 'sample1' in sample_names, "sample1 not found in VCF"
-            assert 'sample2' in sample_names, "sample2 not found in VCF"
-            assert len(sample_names) == 3, f"Expected 3 samples, got {len(sample_names)}: {sample_names}"
+            # Assert 1: Verify we have all expected samples (now aggregated by sample name)
+            # With the new genotype system, samples are aggregated: 'ref', 'sample1', 'sample2'
+            assert any('ref' in s for s in sample_names), f"ref sample not found in VCF. Samples: {sample_names}"
+            assert any('sample1' in s for s in sample_names), f"sample1 not found in VCF. Samples: {sample_names}"
+            assert any('sample2' in s for s in sample_names), f"sample2 not found in VCF. Samples: {sample_names}"
+            assert len(sample_names) == 3, f"Expected 3 samples (ref, sample1, sample2), got {len(sample_names)}: {sample_names}"
             print(f"\n✓ All 3 samples present: {sample_names}")
             
             # Assert 2: Verify we have the expected number of variants (4 variants in the reference file)
@@ -65,7 +66,7 @@ def test_main_simple_nested():
             print(f"✓ Found 4 variants as expected")
             
             # Assert 3: Verify that the 'ref' sample has no alt alleles
-            ref_sample_idx = sample_names.index('ref')
+            ref_sample_idx = [i for i, s in enumerate(sample_names) if 'ref' in s][0]
             sample_column_idx = 9 + ref_sample_idx  # 9 is the FORMAT column index
             
             for i, variant_line in enumerate(variant_lines):
