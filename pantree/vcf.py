@@ -482,20 +482,22 @@ def write_vcf_from_graph(
     exclude_terminus: bool = True,
     size_threshold: float = float('inf'),
     check_degenerate: bool = False,
-    info_fields: Optional[list[_InfoField]] = None
+    info_fields: Optional[list[_InfoField]] = None,
+    no_missingness: bool = False,
 ) -> None:
     """
     Refactored VCF writing function using class-based design.
 
     :param graph: PangenomeGraph instance
     :param gfa_path: the .gfa file, from which walks are read, or None to skip writing genotypes
-    :param vcf_filename: the output vcf file path
+    :param vcf_filename: the output vcf file path (use .vcf.gz extension for bgzipped output)
     :param chr_name: the chromosome name in the first column of output vcf file
     :param logger: Logger instance for logging actions
     :param exclude_terminus: whether to exclude terminus nodes
     :param size_threshold: the truncation length of ref and alt sequence
     :param check_degenerate: whether to exclude variants whose ref and alt alleles are identical
     :param info_fields: List of _InfoField instances to include (defaults to all standard fields)
+    :param no_missingness: whether to skip missingness computation for genotypes
     :return:
     """
     logger.info(f"Start generating vcf")
@@ -507,7 +509,7 @@ def write_vcf_from_graph(
 
     if gfa_path:
         logger.info(f"Getting genotypes from GFA file: {gfa_path}")
-        sample_to_genotype = graph.genotypes_from_gfa(gfa_path, exclude_terminus)
+        sample_to_genotype = graph.genotypes_from_gfa(gfa_path, exclude_terminus, skip_missing=no_missingness)
     else:
         sample_to_genotype = {}
 
@@ -516,8 +518,16 @@ def write_vcf_from_graph(
     vcf_header = _build_vcf_header(chr_name, info_fields, sample_ids)
 
     logger.info(f"Writing vcf: {vcf_filename}")
-    with open(vcf_filename, 'w') as file:
-        file.write(vcf_header)
+
+    # Autodetect bgzip from .vcf.gz extension
+    if vcf_filename.endswith('.vcf.gz') or vcf_filename.endswith('.gz'):
+        import gzip
+        file_handle = gzip.open(vcf_filename, 'wt')
+    else:
+        file_handle = open(vcf_filename, 'w')
+
+    try:
+        file_handle.write(vcf_header)
 
         for u, v in graph.sorted_variant_edges(exclude_terminus=exclude_terminus):
             reference_edge = reference_edges[(u, v)]
@@ -561,4 +571,6 @@ def write_vcf_from_graph(
                 info_fields=info_fields
             )
 
-            file.write(vcf_record.to_vcf_line())
+            file_handle.write(vcf_record.to_vcf_line())
+    finally:
+        file_handle.close()

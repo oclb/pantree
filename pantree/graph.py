@@ -445,6 +445,7 @@ class PangenomeGraph(nx.DiGraph):
                   exclude_terminus: bool = True,
                   size_threshold: float = float('inf'),
                   check_degenerate: bool = False,
+                  no_missingness: bool = False,
                   ) -> None:
         """
         Writes the variant call format (vcf) file.
@@ -453,10 +454,9 @@ class PangenomeGraph(nx.DiGraph):
         :param chr_name: the chromosome name in the first column of output vcf file
         :param size_threshold: the truncation length of ref and alt sequence
         :param check_degenerate: whether to exclude variants whose ref and alt alleles are identical
-        :param log_path: path to log file
+        :param no_missingness: whether to skip missingness computation for genotypes
         :return:
         """
-        # Use graph's logger, or create one if log_path provided
         write_vcf_from_graph(
             graph=self,
             gfa_path=gfa_path,
@@ -466,6 +466,7 @@ class PangenomeGraph(nx.DiGraph):
             exclude_terminus=exclude_terminus,
             size_threshold=size_threshold,
             check_degenerate=check_degenerate,
+            no_missingness=no_missingness,
         )
 
     def genotype(self, walk: list[str], exclude_terminus: bool=True) -> Genotype:
@@ -474,11 +475,15 @@ class PangenomeGraph(nx.DiGraph):
         """
         return Genotype.genotype(self, walk, exclude_terminus)
 
-    def genotypes_from_gfa(self, gfa_path: str, exclude_terminus: bool=True) -> dict[str, tuple[Genotype]]:
+    def genotypes_from_gfa(self, gfa_path: str, exclude_terminus: bool=True, skip_missing: bool=False) -> dict[str, tuple[Genotype]]:
         """
         Compute the phased genotype data for each sample in a GFA file. There can be 1 or 2 haplotypes
         per sample, which are stored in a tuple. There can be any positive number of walks per haplotype,
         which are aggregated together.
+
+        :param gfa_path: path to the GFA file
+        :param exclude_terminus: whether to exclude terminus nodes
+        :param skip_missing: whether to skip missingness computation (useful for vg-generated graphs)
         """
         self.logger.info("Computing genotype for haplotypes")
         genotype_dict: dict[str, Genotype] = {}
@@ -493,8 +498,9 @@ class PangenomeGraph(nx.DiGraph):
             else:
                 genotype_dict[haplotype_name] = genotype
 
-        for _, genotype in genotype_dict.items():
-            genotype.compute_missing_variants(self)
+        if not skip_missing:
+            for _, genotype in genotype_dict.items():
+                genotype.compute_missing_variants(self)
 
         result = {}
         for sample_name, haplo_names in names.items():

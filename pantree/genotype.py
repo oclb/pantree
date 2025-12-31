@@ -1,6 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from math import inf
+import logging
 import numpy as np
 from .utils import edge_complement, get_from_biedge_dict
 
@@ -84,9 +85,13 @@ class Genotype:
         """
         cr = get_from_biedge_dict(self.ref_counts, reference_edge, 0)
         ca = get_from_biedge_dict(self.alt_counts, variant_edge, 0)
-        gt = None if variant_edge in self.missing_variants else int(ca > 0)
-        if cr + ca > 0:
-            assert gt is not None, "A missing genotype should have allele counts of 0"
+        gt = None if (self.missing_variants is not None and variant_edge in self.missing_variants) else int(ca > 0)
+        if cr + ca > 0 and gt is None:
+            logging.warning(
+                f"Variant edge {variant_edge} has allele counts (CR={cr}, CA={ca}) but genotype is missing. "
+                "This may occur with vg-generated graphs. Consider using --no-missingness."
+            )
+            gt = int(ca > 0)
         return gt, cr, ca
 
     @staticmethod
