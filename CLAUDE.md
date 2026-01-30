@@ -56,6 +56,11 @@ tests/                # pytest suite with GFA/VCF fixtures in tests/data/
 
 GFA → parse segments/links/walks → build reference tree (DFS) → identify variant edges → compute genotypes per walk → determine missingness → extract REF/ALT alleles → write VCF
 
+## O2 Cluster
+
+- Project location: `/n/data1/hms/dbmi/oconnor/lab/luke/claude-projects/pantree`
+- Username: `ljo8`
+
 ## Notebook
 
 This project uses a separate notebook repository for analysis logs. See `notebook/INDEX.md` for a summary of past work.
