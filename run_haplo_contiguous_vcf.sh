@@ -9,6 +9,7 @@
 #SBATCH --array=1-48                  # Array for 24 chromosomes x 2 versions = 48 jobs
 
 # Load required modules (adjust if needed)
+module purge
 module load gcc/14.2.0
 module load python/3.13.1
 
@@ -21,12 +22,12 @@ if [ ${SLURM_ARRAY_TASK_ID} -le 24 ]; then
     VERSION="v1"
     CHR_INDEX=$((SLURM_ARRAY_TASK_ID - 1))
     GFA_DIR="/n/data1/hms/dbmi/oconnor/lab/shz311/pangenome/Data/chromosome_gfa_v1"
-    VCF_DIR="/home/pos149/pantree/VCF_V1_HaploCont"
+    VCF_DIR="/n/data1/hms/dbmi/oconnor/lab/pangenome/VCF_V1_HaploCont"
 else
     VERSION="v2"
     CHR_INDEX=$((SLURM_ARRAY_TASK_ID - 25))
     GFA_DIR="/n/data1/hms/dbmi/oconnor/lab/shz311/pangenome/Data/chromosome_gfa_v2"
-    VCF_DIR="/home/pos149/pantree/VCF_V2_HaploCont"
+    VCF_DIR="/n/data1/hms/dbmi/oconnor/lab/pangenome/VCF_V2_HaploCont"
 fi
 
 CHR=${CHROMOSOMES[$CHR_INDEX]}
@@ -52,6 +53,10 @@ echo "Start Time: $(date)"
 echo "Node: $(hostname)"
 echo "=================================================="
 
+PRIORITY_SAMPLES=${PRIORITY_SAMPLES:-"GRCh38,CHM13,HG002"}
+
+export POLARS_SKIP_CPU_CHECK=1
+
 # Record start time
 START_TIME=$(date +%s)
 
@@ -59,10 +64,11 @@ START_TIME=$(date +%s)
 source /home/pos149/pantree/.venv/bin/activate
 
 # Run pantree with haplo_contiguous_dfs_tree method
-pantree ${GFA_FILE} ${VCF_FILE} \
+pantree gfa2vcf ${GFA_FILE} ${VCF_FILE} \
     --chr-id ${CHR} \
     --ref-name GRCh38 \
     --dfs-method contiguous \
+    --priority-samples ${PRIORITY_SAMPLES} \
     --log-path ${LOG_FILE} \
     --verbose
 
