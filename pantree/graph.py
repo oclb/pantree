@@ -163,16 +163,21 @@ class PangenomeGraph(nx.DiGraph):
         walk_end_nodes = []
 
         logger.info(f"Reading GFA file: {gfa_basename}")
+        logger.info("Loading S lines (nodes)")
         for line in read_gfa_line_by_line(gfa_file, line_types=['S']):
             G.add_binode(line.node_id, line.sequence)
+        logger.info(f"Loaded {len(G.nodes) // 2} binodes")
 
+        logger.info("Loading L lines (edges)")
         for line in read_gfa_line_by_line(gfa_file, line_types=['L']):
             G.add_biedge(line.u, line.v)
-
+        logger.info(f"Loaded {len(G.edges) // 2} biedges")
 
         if return_walks:
             G.walks = {}
 
+        logger.info("Loading W/P lines (walks)")
+        walk_count = 0
         for line in read_gfa_line_by_line(gfa_file, line_types=['W', 'P']):
             # Check if haplotype name starts with ref_name (e.g., 'GRCh38#0#chr20' starts with 'GRCh38')
             hit_reference = line.sample_name == ref_name
@@ -195,6 +200,9 @@ class PangenomeGraph(nx.DiGraph):
             walk_end_nodes.append(line.walk[-1])
 
             G.compute_edge_weights([line.walk])
+            walk_count += 1
+            if walk_count % 50 == 0:
+                logger.info(f"Processed {walk_count} walks")
 
         logger.info(f"Loaded {len(G.nodes) / 2:.0f} binodes, {len(G.edges) / 2:.0f} biedges")
 
@@ -488,6 +496,7 @@ class PangenomeGraph(nx.DiGraph):
         self.logger.info("Computing genotype for haplotypes")
         genotype_dict: dict[str, Genotype] = {}
         names = defaultdict(set)
+        walk_count = 0
         for line in read_gfa_line_by_line(gfa_path, line_types=['W', 'P']):
             walk = line.walk
             haplotype_name = '#'.join(line.hap_name.split('#')[:2])
@@ -497,8 +506,14 @@ class PangenomeGraph(nx.DiGraph):
                 genotype_dict[haplotype_name].update(genotype)
             else:
                 genotype_dict[haplotype_name] = genotype
+            walk_count += 1
+            if walk_count % 50 == 0:
+                self.logger.info(f"Processed {walk_count} walks, {len(genotype_dict)} haplotypes")
+
+        self.logger.info(f"Finished processing {walk_count} walks, {len(genotype_dict)} haplotypes")
 
         if not skip_missing:
+            self.logger.info("Computing missing variants for each haplotype")
             for _, genotype in genotype_dict.items():
                 genotype.compute_missing_variants(self)
 

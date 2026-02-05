@@ -2,15 +2,35 @@ from __future__ import annotations
 from dataclasses import dataclass
 from math import inf
 import logging
+import sys
 import numpy as np
 from .utils import edge_complement, get_from_biedge_dict
 
+
+def _deep_getsizeof(obj, seen=None):
+    """Recursively calculate size of objects including contents."""
+    size = sys.getsizeof(obj)
+    if seen is None:
+        seen = set()
+    obj_id = id(obj)
+    if obj_id in seen:
+        return 0
+    seen.add(obj_id)
+    if isinstance(obj, dict):
+        size += sum([_deep_getsizeof(k, seen) + _deep_getsizeof(v, seen) for k, v in obj.items()])
+    elif isinstance(obj, (list, tuple, set, frozenset)):
+        size += sum([_deep_getsizeof(i, seen) for i in obj])
+    return size
+
+
 @dataclass
 class Genotype:
-    ref_counts: dict[str, int]
-    alt_counts: dict[str, int]
+    ref_visited: np.ndarray  # bool array indexed by edge index
+    ref_counts_multi: dict[int, int]  # edge_index -> count for edges visited >= 2 times
+    alt_counts: dict[tuple[str, str], int]
     linear_coverage: list[tuple[int, int]]
     exclude_terminus: bool
+    num_edges: int  # total number of edges in graph
     missing_variants: set[tuple[str, str]] | None = None
 
     @classmethod
@@ -27,7 +47,9 @@ class Genotype:
         end = [graph.termini[1] + '_+' if graph.direction(walk[-1]) == 1 else graph.termini[0] + '_-']
         walk = start + walk + end
 
-        count_ref = {}
+        num_edges = graph.number_of_edges() // 2 + 1  # +1 for safety
+        ref_visited = np.zeros(num_edges, dtype=np.bool_)
+        ref_counts_multi = {}  # only for edges visited >= 2 times
         count_alt = {}
         min_pos = inf
         max_pos = -inf
@@ -42,18 +64,47 @@ class Genotype:
                 max_pos = max(max_pos, graph.right_position(e[0]))
 
             if graph.edges[e]['is_in_tree']:
-                count_ref[e] = count_ref.get(e, 0) + 1
+                edge_idx = int(graph.edges[e]['index'])
+                if ref_visited[edge_idx]:
+                    # Already visited, increment multi count
+                    ref_counts_multi[edge_idx] = ref_counts_multi.get(edge_idx, 1) + 1
+                else:
+                    ref_visited[edge_idx] = True
             else:
                 count_alt[e] = count_alt.get(e, 0) + 1
 
-        return cls(count_ref, count_alt, [(min_pos, max_pos)], exclude_terminus)
+        return cls(ref_visited, ref_counts_multi, count_alt, [(min_pos, max_pos)], exclude_terminus, num_edges)
 
     def update(self, other: 'Genotype'):
-        for key, val in other.ref_counts.items():
-            self.ref_counts[key] = self.ref_counts.get(key, 0) + val
+        # For ref_visited bitmap: edges visited in either become multi if visited in both
+        both_visited = self.ref_visited & other.ref_visited
+        for edge_idx in np.where(both_visited)[0]:
+            # This edge was visited in both, so total count >= 2
+            count_self = self.ref_counts_multi.get(edge_idx, 1)
+            count_other = other.ref_counts_multi.get(edge_idx, 1)
+            self.ref_counts_multi[edge_idx] = count_self + count_other
+        # Merge ref_visited
+        self.ref_visited = self.ref_visited | other.ref_visited
+        # Merge ref_counts_multi for edges only in other
+        for edge_idx, count in other.ref_counts_multi.items():
+            if edge_idx not in self.ref_counts_multi:
+                self.ref_counts_multi[edge_idx] = count
         for key, val in other.alt_counts.items():
             self.alt_counts[key] = self.alt_counts.get(key, 0) + val
         self.linear_coverage += other.linear_coverage
+
+    def memory_breakdown(self) -> dict[str, int]:
+        """Return memory usage in bytes for each component."""
+        return {
+            'ref_visited': self.ref_visited.nbytes,
+            'ref_counts_multi': _deep_getsizeof(self.ref_counts_multi),
+            'alt_counts': _deep_getsizeof(self.alt_counts),
+            'linear_coverage': _deep_getsizeof(self.linear_coverage),
+            'missing_variants': _deep_getsizeof(self.missing_variants) if self.missing_variants else 0,
+            'ref_visited_count': int(np.sum(self.ref_visited)),
+            'ref_counts_multi_len': len(self.ref_counts_multi),
+            'alt_counts_len': len(self.alt_counts),
+        }
 
     def compute_missing_variants(self,
                              graph: "PangenomeGraph"):
@@ -78,12 +129,21 @@ class Genotype:
 
         self.missing_variants = set(result)
 
-    def variant_record(self, variant_edge: tuple[str, str], reference_edge: tuple[str, str]) -> tuple[int|None, int, int|None]:
+    def get_ref_count(self, edge_idx: int) -> int:
+        """Get ref count for an edge by its index."""
+        if edge_idx in self.ref_counts_multi:
+            return self.ref_counts_multi[edge_idx]
+        elif self.ref_visited[edge_idx]:
+            return 1
+        else:
+            return 0
+
+    def variant_record(self, variant_edge: tuple[str, str], reference_edge: tuple[str, str], ref_edge_idx: int) -> tuple[int|None, int, int|None]:
         """
         For variant edge e, returns (GT, CR, CA) where GT is the genotype,
         CR is the reference allele count, and CA is the alternative allele count.
         """
-        cr = get_from_biedge_dict(self.ref_counts, reference_edge, 0)
+        cr = self.get_ref_count(ref_edge_idx)
         ca = get_from_biedge_dict(self.alt_counts, variant_edge, 0)
         gt = None if (self.missing_variants is not None and variant_edge in self.missing_variants) else int(ca > 0)
         if cr + ca > 0 and gt is None:

@@ -58,13 +58,13 @@ class _VariantData:
     @staticmethod
     def compute_allele_counts(sample_to_genotype: dict,
                              variant_edge: tuple[str, str],
-                             reference_edge: tuple[str, str]) -> tuple[int, int]:
+                             ref_edge_idx: int) -> tuple[int, int]:
         """Compute ref and alt allele counts from genotype data.
 
         Args:
             sample_to_genotype: Dict mapping sample names to tuples of Genotype objects
             variant_edge: The variant edge
-            reference_edge: The reference edge
+            ref_edge_idx: The index of the reference edge
 
         Returns:
             Tuple of (ref_count, alt_count)
@@ -75,7 +75,7 @@ class _VariantData:
         for genotypes in sample_to_genotype.values():
             for genotype in genotypes:
                 # Get counts for this haplotype
-                cr = get_from_biedge_dict(genotype.ref_counts, reference_edge, 0)
+                cr = genotype.get_ref_count(ref_edge_idx)
                 ca = get_from_biedge_dict(genotype.alt_counts, variant_edge, 0)
                 ref_count += cr
                 alt_count += ca
@@ -115,8 +115,9 @@ class _VariantData:
 
         # Compute allele counts from genotype data
         if sample_to_genotype:
+            ref_edge_idx = int(graph.edges[reference_edge]['index'])
             ref_allele_count, alt_allele_count = cls.compute_allele_counts(
-                sample_to_genotype, edge, reference_edge
+                sample_to_genotype, edge, ref_edge_idx
             )
         else:
             # No genotype data, set to zero
@@ -394,6 +395,7 @@ def _get_default_info_fields() -> list[_InfoField]:
 
 def _build_genotype_record(variant_edge: tuple[str, str],
                             reference_edge: tuple[str, str],
+                            ref_edge_idx: int,
                             sample_to_genotype: dict[str, tuple],
                             is_inversion: bool,
                             sample_order: list[str]
@@ -414,15 +416,15 @@ def _build_genotype_record(variant_edge: tuple[str, str],
 
         if len(genotypes) == 1:
             # Haploid
-            gt, cr, ca = genotypes[0].variant_record(variant_edge, reference_edge)
+            gt, cr, ca = genotypes[0].variant_record(variant_edge, reference_edge, ref_edge_idx)
             if is_inversion:
                 cr = '.'
             gt_str = _parse_gt(gt)
             result.append(f"{gt_str}:{cr}:{ca}")
         elif len(genotypes) == 2:
             # Diploid
-            gt0, cr0, ca0 = genotypes[0].variant_record(variant_edge, reference_edge)
-            gt1, cr1, ca1 = genotypes[1].variant_record(variant_edge, reference_edge)
+            gt0, cr0, ca0 = genotypes[0].variant_record(variant_edge, reference_edge, ref_edge_idx)
+            gt1, cr1, ca1 = genotypes[1].variant_record(variant_edge, reference_edge, ref_edge_idx)
 
             if is_inversion:
                 cr0 = '.'
@@ -553,9 +555,11 @@ def write_vcf_from_graph(
             # Build genotype records for this edge if samples provided
             if sample_to_genotype:
                 is_inversion = variant_info.edge_data.get('is_inversion', False)
+                ref_edge_idx = int(graph.edges[reference_edge]['index'])
                 genotype_records = _build_genotype_record(
                     variant_edge=edge,
                     reference_edge=reference_edge,
+                    ref_edge_idx=ref_edge_idx,
                     sample_to_genotype=sample_to_genotype,
                     is_inversion=is_inversion,
                     sample_order=sample_ids

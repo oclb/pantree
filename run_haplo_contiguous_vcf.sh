@@ -22,12 +22,12 @@ if [ ${SLURM_ARRAY_TASK_ID} -le 24 ]; then
     VERSION="v1"
     CHR_INDEX=$((SLURM_ARRAY_TASK_ID - 1))
     GFA_DIR="/n/data1/hms/dbmi/oconnor/lab/shz311/pangenome/Data/chromosome_gfa_v1"
-    VCF_DIR="/n/data1/hms/dbmi/oconnor/lab/pangenome/VCF_V1_HaploCont"
+    VCF_DIR="/n/data1/hms/dbmi/oconnor/lab/pangenome/VCF_V1_HaploCont_020526"
 else
     VERSION="v2"
     CHR_INDEX=$((SLURM_ARRAY_TASK_ID - 25))
     GFA_DIR="/n/data1/hms/dbmi/oconnor/lab/shz311/pangenome/Data/chromosome_gfa_v2"
-    VCF_DIR="/n/data1/hms/dbmi/oconnor/lab/pangenome/VCF_V2_HaploCont"
+    VCF_DIR="/n/data1/hms/dbmi/oconnor/lab/pangenome/VCF_V2_HaploCont_020526"
 fi
 
 CHR=${CHROMOSOMES[$CHR_INDEX]}
