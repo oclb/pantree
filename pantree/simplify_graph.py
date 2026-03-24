@@ -67,10 +67,15 @@ def simplify_graph(gfa_file: str, output_gfa: str, ref_name: str = "GRCh38",
     if logger:
         logger.info(f"Simplifying graph with min_allele_length={min_allele_length}")
     
-    simplified_graph = G.simplify_subgraph(
-        pos_range=pos_range,
-        minimum_allele_length=min_allele_length
-    )
+    if pos_range is not None:
+        simplified_graph = G.simplify_subgraph(
+            pos_range=pos_range,
+            minimum_allele_length=min_allele_length
+        )
+    else:
+        simplified_graph = G.simplify_subgraph(
+            minimum_allele_length=min_allele_length
+        )
     
     if logger:
         logger.info(f"Simplified graph has {simplified_graph.number_of_nodes()} nodes and {simplified_graph.number_of_edges()} edges")
