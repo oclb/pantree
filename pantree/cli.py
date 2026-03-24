@@ -102,11 +102,25 @@ def consolidate_cmd(input_vcf, sample_name, haplotype_number, output_vcf):
     process_haplotype_variants(input_vcf, sample_name, haplotype_number, output_vcf)
     print(f"Wrote consolidated VCF file: {output_vcf}")
 
+@cli.command(name='simplify', context_settings={"help_option_names": ["-h", "--help"]})
+@click.argument("gfa_file")
+@click.argument("output_gfa")
+@click.option("--ref-name", "-r", default="GRCh38", help="Reference sample name")
+@click.option("--min-allele-length", "-m", default=1000, type=int,
+              help="Minimum combined allele length to keep a variant (default: 1000)")
+@click.option("--pos-start", type=int, default=None, help="Start position for subgraph")
+@click.option("--pos-end", type=int, default=None, help="End position for subgraph")
+@click.option("--verbose", "-v", is_flag=True, help="Print log statements to console")
+def simplify_cmd(gfa_file, output_gfa, ref_name, min_allele_length, pos_start, pos_end, verbose):
+    """Simplify a pangenome graph and output in GFA format."""
+    from .simplify_graph import simplify_graph
+    simplify_graph(gfa_file, output_gfa, ref_name, min_allele_length, pos_start, pos_end, verbose=verbose)
+
 def main():
     """Backward compatibility wrapper for pantree CLI"""
     import sys
     # If called as 'pantree' with arguments, assume gfa2vcf
-    if len(sys.argv) > 1 and not sys.argv[1].startswith('-') and sys.argv[1] not in ['gfa2vcf', 'consolidate']:
+    if len(sys.argv) > 1 and not sys.argv[1].startswith('-') and sys.argv[1] not in ['gfa2vcf', 'consolidate', 'simplify']:
         sys.argv.insert(1, 'gfa2vcf')
     cli()
 

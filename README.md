@@ -58,6 +58,14 @@ You can take a `.vcf` produced by `pantree` and produce a single-haplotype `.vcf
 pantree consolidate <vcf_file> <sample_name> <haplotype_number> <output_path>
 ```
 
+### `simplify` subcommand
+
+Simplify a pangenome graph by removing small variants, tips, and contracting paths, then output in GFA format:
+
+```bash
+pantree simplify input.gfa simplified.gfa --min-allele-length 1000
+```
+
 ## Python API Usage
 ```python
 from pantree import PangenomeGraph, Genotype
