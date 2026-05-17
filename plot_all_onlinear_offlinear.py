@@ -17,41 +17,34 @@ haplo_all = [21614394, 710924, 3093687, 3753048, 388830, 51, 865]
 haplo_offlinear = [1577758, 265275, 604024, 843469, 183628, 0, 350]
 haplo_onlinear = [20036636, 445649, 2489663, 2909579, 205202, 51, 515]
 
-fig, axes = plt.subplots(3, 2, figsize=(10, 10))
-fig.suptitle('Weighted DFS vs. haplotype-contiguous DFS', fontsize=14, fontweight='bold')
+fig, axes = plt.subplots(3, 1, figsize=(8, 12))
+fig.suptitle('Weighted DFS vs. Haplotype-contiguous DFS', fontsize=14, fontweight='bold')
 
 y_pos = np.arange(len(variant_types))
+bar_height = 0.35
 
-def plot_panel(ax, data, title, color):
-    bars = ax.barh(y_pos, data, color=color, edgecolor='black', linewidth=0.5)
+def plot_panel_sidebyside(ax, data1, data2, title):
+    bars1 = ax.barh(y_pos - bar_height/2, data1, bar_height, color='steelblue', edgecolor='black', linewidth=0.5, label='Weighted DFS')
+    bars2 = ax.barh(y_pos + bar_height/2, data2, bar_height, color='lightcoral', edgecolor='black', linewidth=0.5, label='Haplotype-contiguous DFS')
     ax.set_yticks(y_pos)
     ax.set_yticklabels(variant_types)
     ax.invert_yaxis()
     ax.set_title(title, fontsize=11)
-    for i, v in enumerate(data):
-        ax.text(v + max(data)*0.01, i, str(v), va='center', fontsize=8)
-    ax.set_xlim(0, max(data) * 1.25)
+    max_val = max(max(data1), max(data2))
+    ax.set_xlim(0, max_val * 1.3)
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
     ax.spines['bottom'].set_visible(False)
     ax.spines['left'].set_visible(False)
     ax.tick_params(left=False, bottom=False)
 
-# Row 1: All variants
-plot_panel(axes[0, 0], weighted_all, 'All variants', 'steelblue')
-plot_panel(axes[0, 1], haplo_all, 'All variants', 'lightcoral')
-
-# Row 2: On-linear variants
-plot_panel(axes[1, 0], weighted_onlinear, 'On-linear variants', 'steelblue')
-plot_panel(axes[1, 1], haplo_onlinear, 'On-linear variants', 'lightcoral')
-
-# Row 3: Off-linear variants (Non-GRCh38)
-plot_panel(axes[2, 0], weighted_offlinear, 'Off-linear variants', 'steelblue')
-plot_panel(axes[2, 1], haplo_offlinear, 'Off-linear variants', 'lightcoral')
+plot_panel_sidebyside(axes[0], weighted_all, haplo_all, 'All variants')
+plot_panel_sidebyside(axes[1], weighted_onlinear, haplo_onlinear, 'On-linear variants')
+plot_panel_sidebyside(axes[2], weighted_offlinear, haplo_offlinear, 'Off-linear variants')
 
 # Add panel labels
-labels = ['a', 'b', 'c', 'd', 'e', 'f']
-for i, ax in enumerate(axes.flat):
+labels = ['a', 'b', 'c']
+for i, ax in enumerate(axes):
     ax.text(-0.15, 1.05, labels[i], transform=ax.transAxes, fontsize=12, fontweight='bold')
 
 from matplotlib.patches import Patch
