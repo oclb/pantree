@@ -5,6 +5,7 @@ description = "Reference tree-based variant identification and classification in
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "biopython>=1.85",
     "click>=8.3.0",
     "jupyter>=1.1.1",
     "matplotlib>=3.9.3",

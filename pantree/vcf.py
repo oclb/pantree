@@ -11,6 +11,7 @@ from .utils import (
     node_recover,
     get_from_biedge_dict,
 )
+from .vcf_io import open_vcf_text_for_write
 
 if TYPE_CHECKING:
     from .graph import PangenomeGraph
@@ -241,6 +242,19 @@ class _VariantRecord:
         ]
         fields.extend(self.genotype_records)
         return '\t'.join(fields) + '\n'
+
+    def sort_key(self) -> tuple[str, int, int, str]:
+        """Sort by VCF coordinates while preserving graph-order ties with UIDX."""
+        uidx = -1
+        for info_field in self.info.split(';'):
+            key, _, value = info_field.partition('=')
+            if key == 'UIDX':
+                try:
+                    uidx = int(value)
+                except ValueError:
+                    uidx = -1
+                break
+        return self.chr_name, int(self.vcf_position), uidx, self.variant_id
 
 
 @dataclass
@@ -492,7 +506,7 @@ def write_vcf_from_graph(
 
     :param graph: PangenomeGraph instance
     :param gfa_path: the .gfa file, from which walks are read, or None to skip writing genotypes
-    :param vcf_filename: the output vcf file path (use .vcf.gz extension for bgzipped output)
+    :param vcf_filename: the output vcf file path (use .vcf.gz extension for BGZF output)
     :param chr_name: the chromosome name in the first column of output vcf file
     :param logger: Logger instance for logging actions
     :param exclude_terminus: whether to exclude terminus nodes
@@ -521,60 +535,52 @@ def write_vcf_from_graph(
 
     logger.info(f"Writing vcf: {vcf_filename}")
 
-    # Autodetect bgzip from .vcf.gz extension
-    if vcf_filename.endswith('.vcf.gz') or vcf_filename.endswith('.gz'):
-        import gzip
-        file_handle = gzip.open(vcf_filename, 'wt')
-    else:
-        file_handle = open(vcf_filename, 'w')
+    vcf_records = []
+    for u, v in graph.sorted_variant_edges(exclude_terminus=exclude_terminus):
+        reference_edge = reference_edges[(u, v)]
 
-    try:
-        file_handle.write(vcf_header)
+        if graph.direction(u) == -1 and graph.direction(v) == -1:
+            u, v = edge_complement((u, v))
+        edge = (u, v)
 
-        for u, v in graph.sorted_variant_edges(exclude_terminus=exclude_terminus):
-            reference_edge = reference_edges[(u, v)]
+        # Create _VariantData from graph
+        variant_info = _VariantData.from_graph(
+            graph=graph,
+            edge=edge,
+            reference_edge=reference_edge,
+            chr_name=chr_name,
+            sample_to_genotype=sample_to_genotype,
+            size_threshold=size_threshold
+        )
 
-            if graph.direction(u) == -1 and graph.direction(v) == -1:
-                u, v = edge_complement((u, v))
-            edge = (u, v)
+        # Check for degenerate alleles if requested
+        if check_degenerate and variant_info.is_degenerate:
+            continue
 
-            # Create _VariantData from graph
-            variant_info = _VariantData.from_graph(
-                graph=graph,
-                edge=edge,
+        # Build genotype records for this edge if samples provided
+        if sample_to_genotype:
+            is_inversion = variant_info.edge_data.get('is_inversion', False)
+            ref_edge_idx = int(graph.edges[reference_edge]['index'])
+            genotype_records = _build_genotype_record(
+                variant_edge=edge,
                 reference_edge=reference_edge,
-                chr_name=chr_name,
+                ref_edge_idx=ref_edge_idx,
                 sample_to_genotype=sample_to_genotype,
-                size_threshold=size_threshold
+                is_inversion=is_inversion,
+                sample_order=sample_ids
             )
+        else:
+            genotype_records = []
 
-            # Check for degenerate alleles if requested
-            if check_degenerate and variant_info.is_degenerate:
-                continue
+        # Build VCF record from variant data
+        vcf_records.append(_VariantRecord.from_variant_data(
+            variant_info=variant_info,
+            edge=edge,
+            genotype_records=genotype_records,
+            info_fields=info_fields
+        ))
 
-            # Build genotype records for this edge if samples provided
-            if sample_to_genotype:
-                is_inversion = variant_info.edge_data.get('is_inversion', False)
-                ref_edge_idx = int(graph.edges[reference_edge]['index'])
-                genotype_records = _build_genotype_record(
-                    variant_edge=edge,
-                    reference_edge=reference_edge,
-                    ref_edge_idx=ref_edge_idx,
-                    sample_to_genotype=sample_to_genotype,
-                    is_inversion=is_inversion,
-                    sample_order=sample_ids
-                )
-            else:
-                genotype_records = []
-
-            # Build VCF record from variant data
-            vcf_record = _VariantRecord.from_variant_data(
-                variant_info=variant_info,
-                edge=edge,
-                genotype_records=genotype_records,
-                info_fields=info_fields
-            )
-
+    with open_vcf_text_for_write(vcf_filename) as file_handle:
+        file_handle.write(vcf_header)
+        for vcf_record in sorted(vcf_records, key=lambda record: record.sort_key()):
             file_handle.write(vcf_record.to_vcf_line())
-    finally:
-        file_handle.close()

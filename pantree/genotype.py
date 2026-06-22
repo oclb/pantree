@@ -155,6 +155,27 @@ class Genotype:
         return gt, cr, ca
 
     @staticmethod
+    def _ref_edge_for_index(graph: "PangenomeGraph", edge_idx: int) -> tuple[str, str] | None:
+        for u, v, data in graph.edges(data=True):
+            if data['is_in_tree'] and int(data['index']) == edge_idx:
+                return u, v
+        return None
+
+    @staticmethod
+    def _check_extra_ref_edges(
+        graph: "PangenomeGraph",
+        genotype: "Genotype",
+        expected_ref_indices: set[int],
+        errors: list[str],
+    ) -> None:
+        for edge_idx in range(genotype.num_edges):
+            if edge_idx in expected_ref_indices or genotype.get_ref_count(edge_idx) == 0:
+                continue
+            edge = Genotype._ref_edge_for_index(graph, edge_idx)
+            edge_label = edge if edge is not None else f"index {edge_idx}"
+            errors.append(f"Genotype has ref edge {edge_label} not traversed by any walk")
+
+    @staticmethod
     def verify_genotype_matches_walk(
         graph: "PangenomeGraph",
         walk: list[str],
@@ -197,12 +218,16 @@ class Genotype:
                 expected_alt[e] = expected_alt.get(e, 0) + 1
         
         # Compare expected vs actual ref counts
+        expected_ref_indices = set()
         for edge, expected_count in expected_ref.items():
-            actual_count = get_from_biedge_dict(genotype.ref_counts, edge, 0)
+            edge_idx = int(graph.edges[edge]['index'])
+            expected_ref_indices.add(edge_idx)
+            actual_count = genotype.get_ref_count(edge_idx)
             if actual_count < expected_count:
                 errors.append(
                     f"Ref edge {edge}: expected count >= {expected_count}, got {actual_count}"
                 )
+        Genotype._check_extra_ref_edges(graph, genotype, expected_ref_indices, errors)
         
         # Compare expected vs actual alt counts
         for edge, expected_count in expected_alt.items():
@@ -255,12 +280,16 @@ class Genotype:
                     expected_alt[e] = expected_alt.get(e, 0) + 1
         
         # Compare expected vs actual ref counts
+        expected_ref_indices = set()
         for edge, expected_count in expected_ref.items():
-            actual_count = get_from_biedge_dict(genotype.ref_counts, edge, 0)
+            edge_idx = int(graph.edges[edge]['index'])
+            expected_ref_indices.add(edge_idx)
+            actual_count = genotype.get_ref_count(edge_idx)
             if actual_count != expected_count:
                 errors.append(
                     f"Ref edge {edge}: expected count {expected_count}, got {actual_count}"
                 )
+        Genotype._check_extra_ref_edges(graph, genotype, expected_ref_indices, errors)
         
         # Compare expected vs actual alt counts
         for edge, expected_count in expected_alt.items():
@@ -269,11 +298,6 @@ class Genotype:
                 errors.append(
                     f"Alt edge {edge}: expected count {expected_count}, got {actual_count}"
                 )
-        
-        # Check for extra edges in genotype that weren't in walks
-        for edge in genotype.ref_counts:
-            if edge not in expected_ref and edge_complement(edge) not in expected_ref:
-                errors.append(f"Genotype has ref edge {edge} not traversed by any walk")
         
         for edge in genotype.alt_counts:
             if edge not in expected_alt and edge_complement(edge) not in expected_alt:

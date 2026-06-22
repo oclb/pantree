@@ -152,14 +152,15 @@ class TestGenotypeAggregation(unittest.TestCase):
         for walk in walks:
             genotype = Genotype.genotype(self.G, walk, exclude_terminus=True)
             
-            self.assertIsInstance(genotype.ref_counts, dict)
+            self.assertTrue(hasattr(genotype, 'ref_visited'))
+            self.assertIsInstance(genotype.ref_counts_multi, dict)
             self.assertIsInstance(genotype.alt_counts, dict)
             self.assertIsInstance(genotype.linear_coverage, list)
             
             # Should have entries if walk visits variants
             if len(self.G.variant_edges) > 0:
                 # At least one dict should have entries
-                self.assertTrue(len(genotype.ref_counts) > 0 or len(genotype.alt_counts) > 0)
+                self.assertTrue(genotype.ref_visited.any() or len(genotype.alt_counts) > 0)
     
     @unittest.skip("get_sample_vcf_info method removed during refactor")
     def test_get_sample_vcf_info(self):

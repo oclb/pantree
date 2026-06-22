@@ -1,5 +1,6 @@
 from pantree.cli import cli
 from click.testing import CliRunner
+import gzip
 import os
 import tempfile
 
@@ -88,3 +89,29 @@ def test_main_simple_nested():
         if os.path.exists(vcf_file):
             os.unlink(vcf_file)
 
+
+def test_cli_gfa2vcf_and_consolidate_with_bgzf_vcf(tmp_path):
+    """Test CLI can write BGZF VCF and use it as consolidate input."""
+    runner = CliRunner()
+    gfa_file = os.path.join(os.path.dirname(__file__), "data", "simple_nested.gfa")
+    vcf_file = tmp_path / "simple_nested.vcf.gz"
+    output_vcf = tmp_path / "sample2.hap0.vcf"
+
+    result = runner.invoke(
+        cli,
+        ['gfa2vcf', gfa_file, str(vcf_file), '--chr-id', 'chr1', '--ref-name', 'ref']
+    )
+
+    assert result.exit_code == 0, result.output
+    assert vcf_file.exists()
+    with gzip.open(vcf_file, 'rt') as f:
+        assert f.readline().strip() == '##fileformat=VCFv4.2'
+
+    result = runner.invoke(
+        cli,
+        ['consolidate', str(vcf_file), 'sample2', '0', str(output_vcf)]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert output_vcf.exists()
+    assert output_vcf.read_text().startswith('##fileformat=VCFv4.2')

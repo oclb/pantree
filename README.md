@@ -42,7 +42,7 @@ uv run pantree <gfa_file> <vcf_file> [options]
 - `--priority-samples TEXT`: Comma-separated list of sample names.
 - `--no-missingness`: Skip missingness computation for genotypes (see below)
 
-To output a bgzipped VCF, use a `.vcf.gz` extension for the output file. 
+To output a BGZF-compressed VCF, use a `.vcf.gz` extension for the output file.
 
 The `--dfs-method=contiguous` option creates a reference tree whose branches follow individual haplotypes as long as they can. They switch to a new haplotype when the current haplotype ends, or when the next node on the current haplotype is already in the reference tree. This behavior only applies to haplotypes belonging to the `--priority-samples` list. When switching to a new haplotype, these same samples are prioritized, in the order that they are specified. Additionally, 'haplotype positions' are computed for haplotypes belonging to samples in this list: if that haplotype visits the branch point of some haplotype, then the position of that branch point is used to compute the haplotype position of that variant edge. This follows the same rule as the ordinary `POS` field, which is that the position of the variant is the position of the first base of the `REF` and `ALT` alleles; ordinarily this is the first base after the end of the branch point node, but for on-reference indels, one base is prepended to both alleles to make them non-empty, and accordingly the position is decremented by one.
 
@@ -57,6 +57,8 @@ You can take a `.vcf` produced by `pantree` and produce a single-haplotype `.vcf
 ```bash
 pantree consolidate <vcf_file> <sample_name> <haplotype_number> <output_path>
 ```
+
+The input VCF may be uncompressed (`.vcf`) or BGZF/gzip-compressed (`.vcf.gz`).
 
 ### `simplify` subcommand
 

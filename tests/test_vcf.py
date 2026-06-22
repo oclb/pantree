@@ -4,8 +4,9 @@ Unit tests for VCF writing functionality
 import unittest
 import os
 import tempfile
+import gzip
+from Bio import bgzf
 from pantree.graph import PangenomeGraph
-from pantree.genotype import Genotype
 from pantree.vcf import (
     _build_genotype_record,
     _VariantRecord,
@@ -64,11 +65,14 @@ class TestGenotypeRecord(unittest.TestCase):
         
         edge = variant_edges[0]
         reference_edge = self.G.representative_edge(self.G.reference_tree_edge(edge))
+        ref_edge_idx = int(self.G.edges[reference_edge]['index'])
         is_inversion = self.G.is_inversion(edge)
         sample_order = list(sample_to_genotype.keys())
         
         # Build genotype record
-        genotype_records = _build_genotype_record(edge, reference_edge, sample_to_genotype, is_inversion, sample_order)
+        genotype_records = _build_genotype_record(
+            edge, reference_edge, ref_edge_idx, sample_to_genotype, is_inversion, sample_order
+        )
         
         # Should have one record per sample
         self.assertEqual(len(genotype_records), len(sample_to_genotype))
@@ -93,11 +97,14 @@ class TestGenotypeRecord(unittest.TestCase):
         variant_edges = list(self.G.sorted_variant_edges(exclude_terminus=True))
         edge = variant_edges[0]
         reference_edge = self.G.representative_edge(self.G.reference_tree_edge(edge))
+        ref_edge_idx = int(self.G.edges[reference_edge]['index'])
         is_inversion = self.G.is_inversion(edge)
         sample_order = list(sample_to_genotype.keys())
         
         # Build genotype record
-        genotype_records = _build_genotype_record(edge, reference_edge, sample_to_genotype, is_inversion, sample_order)
+        genotype_records = _build_genotype_record(
+            edge, reference_edge, ref_edge_idx, sample_to_genotype, is_inversion, sample_order
+        )
         
         for record in genotype_records:
             parts = record.split(':')
@@ -125,38 +132,37 @@ class TestGenotypeRecord(unittest.TestCase):
     
     def test_build_genotype_record_inversion(self):
         """Test that inversions set CR to '.'"""
-        # Create mock genotypes
-        genotype1 = Genotype(
-            ref_counts={('1_+', '2_+'): 1},
-            alt_counts={('3_+', '4_+'): 1},
-            linear_coverage=[(0, 100)],
-            exclude_terminus=True,
-            missing_variants=set()
-        )
-        
-        sample_to_genotype = {
-            'sample1': (genotype1,)
-        }
-        
-        variant_edge = ('1_+', '2_+')
-        reference_edge = ('1_+', '2_+')
-        sample_order = ['sample1']
+        sample_to_genotype = self.G.genotypes_from_gfa(self.gfa_file, exclude_terminus=True)
+        variant_edge = self.G.sorted_variant_edges(exclude_terminus=True)[0]
+        reference_edge = self.G.representative_edge(self.G.reference_tree_edge(variant_edge))
+        ref_edge_idx = int(self.G.edges[reference_edge]['index'])
+        sample_order = list(sample_to_genotype.keys())
         
         # Test with inversion
-        records = _build_genotype_record(variant_edge, reference_edge, sample_to_genotype, is_inversion=True, sample_order=sample_order)
-        self.assertEqual(len(records), 1)
+        records = _build_genotype_record(
+            variant_edge, reference_edge, ref_edge_idx, sample_to_genotype,
+            is_inversion=True, sample_order=sample_order
+        )
+        self.assertEqual(len(records), len(sample_order))
         
         # CR should be '.'
-        parts = records[0].split(':')
-        self.assertEqual(parts[1], '.')
+        for record in records:
+            parts = record.split(':')
+            self.assertTrue(all(value == '.' for value in parts[1].split(',')))
         
         # Test without inversion
-        records = _build_genotype_record(variant_edge, reference_edge, sample_to_genotype, is_inversion=False, sample_order=sample_order)
-        self.assertEqual(len(records), 1)
+        records = _build_genotype_record(
+            variant_edge, reference_edge, ref_edge_idx, sample_to_genotype,
+            is_inversion=False, sample_order=sample_order
+        )
+        self.assertEqual(len(records), len(sample_order))
         
         # CR should be numeric
-        parts = records[0].split(':')
-        self.assertTrue(parts[1].isdigit())
+        self.assertTrue(any(
+            value.isdigit()
+            for record in records
+            for value in record.split(':')[1].split(',')
+        ))
 
 
 class TestVCFRecord(unittest.TestCase):
@@ -241,11 +247,12 @@ class TestSampleOrdering(unittest.TestCase):
         
         edge = variant_edges[0]
         reference_edge = self.G.representative_edge(self.G.reference_tree_edge(edge))
+        ref_edge_idx = int(self.G.edges[reference_edge]['index'])
         is_inversion = self.G.is_inversion(edge)
         
         # Build genotype records with specific order
         genotype_records = _build_genotype_record(
-            edge, reference_edge, sample_to_genotype, is_inversion, sample_order
+            edge, reference_edge, ref_edge_idx, sample_to_genotype, is_inversion, sample_order
         )
         
         # Should have one record per sample
@@ -306,6 +313,60 @@ class TestWriteVCF(unittest.TestCase):
             
         finally:
             # Clean up
+            if os.path.exists(vcf_path):
+                os.remove(vcf_path)
+
+    def test_write_vcf_gz_is_bgzf_and_gzip_readable(self):
+        """Test that .vcf.gz output is BGZF and remains gzip-compatible."""
+        with tempfile.NamedTemporaryFile(suffix='.vcf.gz', delete=False) as f:
+            vcf_path = f.name
+
+        try:
+            import logging
+            write_vcf_from_graph(
+                graph=self.G,
+                gfa_path=self.gfa_file,
+                vcf_filename=vcf_path,
+                chr_name='chr1',
+                logger=logging.getLogger('pantree'),
+                exclude_terminus=True
+            )
+
+            with bgzf.open(vcf_path, 'rt') as f:
+                self.assertEqual(f.readline().strip(), '##fileformat=VCFv4.2')
+
+            with gzip.open(vcf_path, 'rt') as f:
+                content = f.read()
+            self.assertIn('#CHROM', content)
+            self.assertIn('chr1', content)
+
+        finally:
+            if os.path.exists(vcf_path):
+                os.remove(vcf_path)
+
+    def test_write_vcf_records_are_sorted_by_position(self):
+        """Test output records are sorted for tabix-compatible coordinate order."""
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.vcf', delete=False) as f:
+            vcf_path = f.name
+
+        try:
+            import logging
+            write_vcf_from_graph(
+                graph=self.G,
+                gfa_path=self.gfa_file,
+                vcf_filename=vcf_path,
+                chr_name='chr1',
+                logger=logging.getLogger('pantree'),
+                exclude_terminus=True
+            )
+
+            with open(vcf_path, 'r') as f:
+                variant_lines = [line for line in f if not line.startswith('#')]
+
+            positions = [int(line.split('\t')[1]) for line in variant_lines]
+            self.assertEqual(positions, sorted(positions))
+
+        finally:
             if os.path.exists(vcf_path):
                 os.remove(vcf_path)
     
