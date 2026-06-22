@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(/**)",
+      "Edit(/notebook/**)",
+      "Write(/notebook/**)",
+      "Bash(git -C notebook *)"
+    ]
+  }
+}

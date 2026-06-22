@@ -171,3 +171,6 @@ issues.md
 .DS_Store
 output/*
 .rules
+
+# Claude Code notebook (separate repo)
+notebook/
