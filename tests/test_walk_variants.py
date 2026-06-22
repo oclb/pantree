@@ -36,7 +36,8 @@ This is designed for variant graph traversal, where you need to:
 
 import pytest
 import polars as pl
-from pantree.walk_variants import Allele, overlap, get_walk_variants
+from pantree.graph import PangenomeGraph
+from pantree.walk_variants import Allele, overlap, get_walk_variants, process_haplotype_variants
 
 
 class TestOverlapFunction:
@@ -572,3 +573,21 @@ class TestGetWalkVariants:
         # DUP variant should have DUP status
         dup_results = [r for r in results if r.status == "DUP"]
         assert len(dup_results) == 1
+
+
+def test_process_haplotype_variants_accepts_bgzf_input(tmp_path):
+    """Test consolidate input can be a Pantree-generated BGZF VCF."""
+    gfa_path = "tests/data/simple_nested.gfa"
+    uncompressed_vcf = tmp_path / "input.vcf"
+    compressed_vcf = tmp_path / "input.vcf.gz"
+    uncompressed_output = tmp_path / "uncompressed.out.vcf"
+    compressed_output = tmp_path / "compressed.out.vcf"
+
+    graph = PangenomeGraph.from_gfa_line_by_line(gfa_path, ref_name='ref')
+    graph.write_vcf(gfa_path, str(uncompressed_vcf), chr_name='chr0')
+    graph.write_vcf(gfa_path, str(compressed_vcf), chr_name='chr0')
+
+    process_haplotype_variants(str(uncompressed_vcf), 'sample2', 0, str(uncompressed_output))
+    process_haplotype_variants(str(compressed_vcf), 'sample2', 0, str(compressed_output))
+
+    assert compressed_output.read_text() == uncompressed_output.read_text()

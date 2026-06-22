@@ -5,3 +5,4 @@ setuptools~=68.2.0
 tqdm
 jupyter
 matplotlib
+biopython>=1.85

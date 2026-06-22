@@ -1,12 +1,14 @@
 import polars as pl
 import re
 
+from .vcf_io import open_vcf_text_for_read
+
 def read_vcf_to_lazyframe(vcf_path: str) -> pl.LazyFrame:
     # Parse header to extract INFO field IDs and FORMAT fields
     info_fields = []
     format_fields = []
     sample_names = []
-    with open(vcf_path, 'r') as f:
+    with open_vcf_text_for_read(vcf_path) as f:
         for line in f:
             if line.startswith('##INFO='):
                 match = re.search(r'ID=([^,]+)', line)

@@ -129,7 +129,8 @@ class TestGenotypeClass(unittest.TestCase):
         self.assertIsInstance(genotype, Genotype)
 
         # Check that it has the expected attributes
-        self.assertIsInstance(genotype.ref_counts, dict)
+        self.assertTrue(hasattr(genotype, 'ref_visited'))
+        self.assertIsInstance(genotype.ref_counts_multi, dict)
         self.assertIsInstance(genotype.alt_counts, dict)
         self.assertIsInstance(genotype.linear_coverage, list)
         self.assertEqual(genotype.exclude_terminus, True)
@@ -160,7 +161,7 @@ class TestGenotypeClass(unittest.TestCase):
         genotype2 = Genotype.genotype(self.G, walk2, exclude_terminus=True)
 
         # Store original counts
-        orig_ref_count = sum(genotype1.ref_counts.values())
+        orig_ref_count = sum(genotype1.get_ref_count(i) for i in range(genotype1.num_edges))
         orig_alt_count = sum(genotype1.alt_counts.values())
         orig_coverage_len = len(genotype1.linear_coverage)
 
@@ -168,7 +169,7 @@ class TestGenotypeClass(unittest.TestCase):
         genotype1.update(genotype2)
 
         # Check that counts increased
-        new_ref_count = sum(genotype1.ref_counts.values())
+        new_ref_count = sum(genotype1.get_ref_count(i) for i in range(genotype1.num_edges))
         new_alt_count = sum(genotype1.alt_counts.values())
         new_coverage_len = len(genotype1.linear_coverage)
 
@@ -211,7 +212,8 @@ class TestGenotypeClass(unittest.TestCase):
         if variant_edges:
             edge = variant_edges[0]
             reference_edge = self.G.reference_tree_edge(edge)
-            gt, cr, ca = genotype.variant_record(edge, reference_edge)
+            ref_edge_idx = int(self.G.edges[reference_edge]['index'])
+            gt, cr, ca = genotype.variant_record(edge, reference_edge, ref_edge_idx)
 
             # GT should be None or int
             self.assertTrue(gt is None or isinstance(gt, int))
@@ -369,6 +371,26 @@ class TestGenotypeMatchesWalk(unittest.TestCase):
 
         is_valid, errors = Genotype.verify_genotype_matches_walk(G, walk, genotype)
         self.assertTrue(is_valid, f"Genotype should match walk. Errors: {errors}")
+
+    def test_verify_genotype_rejects_extra_ref_edge(self):
+        """Test verification detects a reference edge not traversed by the walk."""
+        test_dir = os.path.dirname(__file__)
+        gfa_file = os.path.join(test_dir, "data", "simple_nested.gfa")
+        G = PangenomeGraph.from_gfa(gfa_file, ref_name='ref')
+
+        walk = ['1_+', '2_+', '4_+', '9_+', '10_+', '11_+']
+        genotype = Genotype.genotype(G, walk, exclude_terminus=True)
+
+        extra_edge = ('5_+', '6_+')
+        self.assertTrue(G.edges[extra_edge]['is_in_tree'])
+        extra_idx = int(G.edges[extra_edge]['index'])
+        self.assertEqual(genotype.get_ref_count(extra_idx), 0)
+
+        genotype.ref_visited[extra_idx] = True
+
+        is_valid, errors = Genotype.verify_genotype_matches_walks(G, [walk], genotype)
+        self.assertFalse(is_valid)
+        self.assertTrue(any('not traversed' in error for error in errors))
 
     def test_verify_all_haplotypes_c4a_with_inversion(self):
         """Test that all haplotypes in c4a_with_inversion_and_sequences.gfa have matching genotypes"""
