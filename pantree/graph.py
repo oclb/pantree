@@ -494,13 +494,16 @@ class PangenomeGraph(nx.DiGraph):
         :param skip_missing: whether to skip missingness computation (useful for vg-generated graphs)
         """
         self.logger.info("Computing genotype for haplotypes")
+        sample_haplotypes = defaultdict(dict)
         genotype_dict: dict[str, Genotype] = {}
-        names = defaultdict(set)
         walk_count = 0
-        for line in read_gfa_line_by_line(gfa_path, line_types=['W', 'P']):
+        for order, line in enumerate(read_gfa_line_by_line(gfa_path, line_types=['W', 'P'])):
             walk = line.walk
             haplotype_name = '#'.join(line.hap_name.split('#')[:2])
-            names[line.sample_name].add(haplotype_name)
+            sample_haplotypes[line.sample_name].setdefault(
+                haplotype_name,
+                self._haplotype_order_key(line.hap_name, order)
+            )
             genotype: Genotype = self.genotype(walk, exclude_terminus)
             if haplotype_name in genotype_dict:
                 genotype_dict[haplotype_name].update(genotype)
@@ -518,11 +521,23 @@ class PangenomeGraph(nx.DiGraph):
                 genotype.compute_missing_variants(self)
 
         result = {}
-        for sample_name, haplo_names in names.items():
+        for sample_name, haplo_names in sample_haplotypes.items():
             assert len(haplo_names) in (1,2), "Samples should be haploid or diploid"
-            result[sample_name] = tuple(genotype_dict[name] for name in haplo_names)
+            ordered_names = sorted(haplo_names, key=haplo_names.__getitem__)
+            result[sample_name] = tuple(genotype_dict[name] for name in ordered_names)
 
         return result
+
+    @staticmethod
+    def _haplotype_order_key(hap_name: str, order: int) -> tuple[int, int, int]:
+        """
+        Sort W-line haplotypes by their explicit haplotype index, falling back
+        to first-seen order for P-lines or nonstandard haplotype names.
+        """
+        parts = hap_name.split('#')
+        if len(parts) >= 2 and parts[1].isdigit():
+            return 0, int(parts[1]), order
+        return 1, order, order
 
     def add_binode(self, binode: str, seq: str = ''):
         """

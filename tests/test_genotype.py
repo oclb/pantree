@@ -3,8 +3,13 @@ Unit tests for genotype-related functionality
 """
 import unittest
 import os
+import json
+import subprocess
+import sys
+import textwrap
 from pantree.graph import PangenomeGraph
 from pantree.genotype import Genotype
+from pantree.gfa import read_gfa_line_by_line
 
 
 class TestPositionAndDistance(unittest.TestCase):
@@ -280,6 +285,73 @@ class TestGenotypesFromGFA(unittest.TestCase):
                 genotypes = result[sample_name]
                 self.assertEqual(len(genotypes), 2,
                                f"{sample_name} should have 2 haplotypes")
+
+    def test_genotypes_from_gfa_orders_haplotypes_by_gfa_index(self):
+        """Test that diploid haplotypes are ordered by explicit GFA haplotype index"""
+        result = self.G.genotypes_from_gfa(self.gfa_file, exclude_terminus=True)
+        sample2_lines = [
+            line for line in read_gfa_line_by_line(self.gfa_file, line_types=['W', 'P'])
+            if line.sample_name == 'sample2'
+        ]
+        self.assertEqual(
+            ['#'.join(line.hap_name.split('#')[:2]) for line in sample2_lines],
+            ['sample2#1', 'sample2#2'],
+        )
+
+        expected_genotypes = []
+        for line in sample2_lines:
+            genotype = self.G.genotype(line.walk, exclude_terminus=True)
+            genotype.compute_missing_variants(self.G)
+            expected_genotypes.append(genotype)
+
+        def genotype_signature(genotype):
+            signature = []
+            for edge in self.G.sorted_variant_edges(exclude_terminus=True):
+                reference_edge = self.G.representative_edge(self.G.reference_tree_edge(edge))
+                ref_edge_idx = int(self.G.edges[reference_edge]['index'])
+                signature.append(genotype.variant_record(edge, reference_edge, ref_edge_idx))
+            return signature
+
+        self.assertEqual(
+            [genotype_signature(genotype) for genotype in result['sample2']],
+            [genotype_signature(genotype) for genotype in expected_genotypes],
+        )
+
+    def test_haplotype_tuple_stable_across_python_hash_seeds(self):
+        """Test that phased haplotype tuple order is deterministic across hash seeds"""
+        code = textwrap.dedent(f"""
+            import json
+            from pantree.graph import PangenomeGraph
+
+            gfa_file = {self.gfa_file!r}
+            graph = PangenomeGraph.from_gfa_line_by_line(gfa_file, ref_name='ref')
+            genotypes = graph.genotypes_from_gfa(gfa_file, exclude_terminus=True)
+            variant_edge = ('7_+', '8_+')
+            reference_edge = ('6_+', '8_+')
+            ref_edge_idx = int(graph.edges[reference_edge]['index'])
+            records = [
+                genotype.variant_record(variant_edge, reference_edge, ref_edge_idx)
+                for genotype in genotypes['sample2']
+            ]
+            print(json.dumps(records))
+        """)
+
+        outputs = []
+        for seed in ('1', '2', '3'):
+            env = os.environ.copy()
+            env['PYTHONHASHSEED'] = seed
+            completed = subprocess.run(
+                [sys.executable, '-c', code],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            outputs.append(json.loads(completed.stdout))
+
+        self.assertEqual(outputs[0], outputs[1])
+        self.assertEqual(outputs[0], outputs[2])
+        self.assertEqual(outputs[0], [[1, 0, 1], [0, 1, 0]])
 
 
 class TestGenotypeMatchesWalk(unittest.TestCase):
