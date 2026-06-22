@@ -38,12 +38,6 @@ class TestPositionAndDistance(unittest.TestCase):
             self.assertIn('tree_position', self.G.nodes[node])
             self.assertIsInstance(self.G.nodes[node]['tree_position'], (int, float))
 
-    @unittest.skip("get_vcf_position method removed - now in vcf.py")
-    def test_get_vcf_position(self):
-        """Test VCF position calculation"""
-        pass
-
-
 class TestEdgeProperties(unittest.TestCase):
     """Test edge property methods"""
 

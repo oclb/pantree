@@ -21,8 +21,9 @@ def read_vcf_to_lazyframe(vcf_path: str) -> pl.LazyFrame:
             elif line.startswith('#CHROM'):
                 # Extract sample names from header line
                 parts = line.strip().split('\t')
-                format_idx = parts.index('FORMAT')
-                sample_names = parts[format_idx + 1:]
+                if 'FORMAT' in parts:
+                    format_idx = parts.index('FORMAT')
+                    sample_names = parts[format_idx + 1:]
                 break
 
     # Read VCF data as LazyFrame
@@ -38,12 +39,13 @@ def read_vcf_to_lazyframe(vcf_path: str) -> pl.LazyFrame:
     ).unnest('INFO')
 
     # Parse genotype fields for each sample
-    format_pattern = ':'.join([r'([^:]+)' for _ in format_fields])
-    for sample in sample_names:
-        result = result.with_columns(
-            pl.col(sample).str.extract_groups(format_pattern).struct.rename_fields(
-                [f'{sample}_{field}' for field in format_fields]
-            )
-        ).unnest(sample)
+    if format_fields:
+        format_pattern = ':'.join([r'([^:]+)' for _ in format_fields])
+        for sample in sample_names:
+            result = result.with_columns(
+                pl.col(sample).str.extract_groups(format_pattern).struct.rename_fields(
+                    [f'{sample}_{field}' for field in format_fields]
+                )
+            ).unnest(sample)
 
     return result
