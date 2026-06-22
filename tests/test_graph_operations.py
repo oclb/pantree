@@ -108,8 +108,7 @@ class GraphOperationsTestBase:
         self.assertIsNotNone(G_max_weight.reference_tree)
         self.assertGreater(G_max_weight.reference_tree.number_of_edges(), 0)
 
-        # Test that the max_weight method works (it's the only one compatible with standard GFA files)
-        # The contiguous method requires haplotype labels which aren't present in standard GFA files
+        # Test that the max_weight method still works on the same GFA.
         G_again = PangenomeGraph.from_gfa_line_by_line(gfa_file, ref_name='ref', dfs_method=dfs_methods['max_weight'])
         self.assertIsNotNone(G_again.reference_tree)
         self.assertGreater(G_again.reference_tree.number_of_edges(), 0)
@@ -147,6 +146,68 @@ class GraphOperationsTestBase:
         # Reference path should still be correctly identified
         self.assertIsNotNone(G_contiguous.reference_path)
         self.assertGreater(len(G_contiguous.reference_path), 0)
+
+    def test_gfa_loader_adds_haplotype_labels_to_edges(self):
+        """Prioritized GFA walks annotate traversed edges with full haplotype labels."""
+        test_dir = os.path.dirname(__file__)
+        gfa_file = os.path.join(test_dir, "data", "contiguous_priority.gfa")
+
+        G = PangenomeGraph.from_gfa_line_by_line(
+            gfa_file,
+            ref_name='ref',
+            dfs_method=dfs_methods['contiguous'],
+            priority_dict={
+                'ref': 0,
+                'sample1': 1,
+                'sample2': 2,
+            }
+        )
+
+        self.assertIn('sample1#1#0', G.edges['1_+', '2_+'])
+        self.assertIn('sample1#1#0', G.edges['5_-', '2_-'])
+        self.assertIn('sample2#1#0', G.edges['1_+', '3_+'])
+        self.assertIn('sample2#1#0', G.edges['5_-', '3_-'])
+        self.assertIn('sample1#1#0', G.haplo_priorities)
+        self.assertNotIn('sample1', G.haplo_priorities)
+
+    def test_contiguous_priority_samples_change_gfa_loaded_tree(self):
+        """Swapping sample priorities changes the contiguous DFS tree on a loaded GFA."""
+        test_dir = os.path.dirname(__file__)
+        gfa_file = os.path.join(test_dir, "data", "contiguous_priority.gfa")
+
+        G_sample1_first = PangenomeGraph.from_gfa_line_by_line(
+            gfa_file,
+            ref_name='ref',
+            dfs_method=dfs_methods['contiguous'],
+            priority_dict={
+                'ref': 0,
+                'sample1': 1,
+                'sample2': 2,
+            }
+        )
+        G_sample2_first = PangenomeGraph.from_gfa_line_by_line(
+            gfa_file,
+            ref_name='ref',
+            dfs_method=dfs_methods['contiguous'],
+            priority_dict={
+                'ref': 0,
+                'sample2': 1,
+                'sample1': 2,
+            }
+        )
+
+        self.assertIn(('1_+', '2_+'), G_sample1_first.reference_tree.edges())
+        self.assertIn(('2_+', '5_+'), G_sample1_first.reference_tree.edges())
+        self.assertNotIn(('3_+', '5_+'), G_sample1_first.reference_tree.edges())
+
+        self.assertIn(('1_+', '3_+'), G_sample2_first.reference_tree.edges())
+        self.assertIn(('3_+', '5_+'), G_sample2_first.reference_tree.edges())
+        self.assertNotIn(('2_+', '5_+'), G_sample2_first.reference_tree.edges())
+
+        self.assertNotEqual(
+            set(G_sample1_first.reference_tree.edges()),
+            set(G_sample2_first.reference_tree.edges()),
+        )
 
     def test_priority_dict_affects_haplotype_positions(self):
         """Test that priority_dict correctly affects which haplotype positions are stored on nodes"""

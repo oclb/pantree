@@ -191,6 +191,7 @@ class PangenomeGraph(nx.DiGraph):
             if line.sample_name in priority_dict:
                 G.haplo_priorities[line.hap_name] = priority_dict[line.sample_name]
                 G.update_haplotype_positions(line)
+                G.update_haplotype_edge_positions(line)
 
             if return_walks:
                 assert G.walks is not None
@@ -210,7 +211,7 @@ class PangenomeGraph(nx.DiGraph):
 
         G.add_terminal_nodes(walk_start_nodes=walk_start_nodes, walk_end_nodes=walk_end_nodes)
         logger.info("Computing reference tree")
-        G.compute_reference_tree(dfs_method, haplo_priorities=priority_dict)
+        G.compute_reference_tree(dfs_method, haplo_priorities=G.haplo_priorities)
 
         logger.info("Computing branch points")
         G.annotate_branch_points()
@@ -593,10 +594,8 @@ class PangenomeGraph(nx.DiGraph):
 
     def update_haplotype_positions(self, line: GFAWalkLine) -> None:
         """
-        For each edge (u->v) in the walks, store:
-        primary_edge_pos = ((hap_id, contig_name, walk_id), position_bp)
-        Keep only the tuple from the highest-priority hap (smaller hap_rank wins).
-        position_bp is the cumulative bp offset at the START of (u->v) within that walk.
+        For each node in the walk, store the cumulative bp offset after traversing
+        that node under the full haplotype name.
         """
 
         walk = line.walk
@@ -607,6 +606,21 @@ class PangenomeGraph(nx.DiGraph):
             offset += len(self.nodes[u]['sequence'])
             self.nodes[u][hap_name] = offset
             self.nodes[node_complement(u)][hap_name] = offset
+
+    def update_haplotype_edge_positions(self, line: GFAWalkLine) -> None:
+        """
+        Mark each traversed walk edge with the full haplotype name.
+
+        The stored value is the cumulative bp offset after traversing the source
+        node, i.e. the position at the start of the transition.
+        """
+        hap_name = line.hap_name
+        offset = line.contig_start
+
+        for u, v in zip(line.walk[:-1], line.walk[1:]):
+            offset += len(self.nodes[u]['sequence'])
+            self.edges[u, v][hap_name] = offset
+            self.edges[node_complement(v), node_complement(u)][hap_name] = offset
 
     def compute_edge_weights(self, walks: list[list[str]]):
         """

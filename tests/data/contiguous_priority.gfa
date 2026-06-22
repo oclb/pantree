@@ -1,0 +1,14 @@
+H	VN:Z:1.1	RS:Z:ref
+S	1	A
+S	2	C
+S	3	G
+S	4	T
+S	5	A
+L	1	+	4	+	0M
+L	1	+	2	+	0M
+L	2	+	5	+	0M
+L	1	+	3	+	0M
+L	3	+	5	+	0M
+W	ref	0	0	0	2	>1>4
+W	sample1	1	0	0	3	>1>2>5
+W	sample2	1	0	0	3	>1>3>5
