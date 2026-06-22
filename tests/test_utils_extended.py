@@ -5,8 +5,10 @@ import unittest
 import os
 import tempfile
 from pantree.utils import (
+    _node_convert,
     sequence_complement,
     node_complement,
+    node_recover,
     edge_complement,
     walk_complement,
 )
@@ -52,6 +54,20 @@ class TestSequenceOperations(unittest.TestCase):
         # Single node walk
         single_walk = ['1_+']
         self.assertEqual(walk_complement(single_walk), ['1_-'])
+
+    def test_node_recover_preserves_underscores(self):
+        """Test recovery of oriented node IDs with underscores in segment names"""
+        self.assertEqual(_node_convert('>node_with_underscore'), 'node_with_underscore_+')
+        self.assertEqual(_node_convert('<node_with_underscore'), 'node_with_underscore_-')
+        self.assertEqual(node_recover('node_with_underscore_+'), '>node_with_underscore')
+        self.assertEqual(node_recover('node_with_underscore_-'), '<node_with_underscore')
+
+    def test_node_recover_terminus_ids(self):
+        """Test recovery of special terminus node IDs"""
+        self.assertEqual(node_recover('+_terminus_+'), '>startTerminus')
+        self.assertEqual(node_recover('+_terminus_-'), '<startTerminus')
+        self.assertEqual(node_recover('-_terminus_+'), '>endTerminus')
+        self.assertEqual(node_recover('-_terminus_-'), '<endTerminus')
 
 
 class TestGFAReading(unittest.TestCase):

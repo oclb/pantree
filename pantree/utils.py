@@ -30,17 +30,22 @@ def _flip(s):
         raise ValueError()
 
 def node_recover(node_id):
-    if len(node_id.split('_')) == 2:
-        node, direction = node_id.split('_')
-    else:
-        terminus, node, direction = node_id.split('_')
-        node = 'start' + node.title() if terminus == '+' else 'end' + node.title()
+    try:
+        node, direction = node_id.rsplit('_', 1)
+    except ValueError:
+        raise ValueError(f"Invalid node ID: {node_id}") from None
+
+    if node == '+_terminus':
+        node = 'startTerminus'
+    elif node == '-_terminus':
+        node = 'endTerminus'
+
     if direction == '+':
         return '>'+node
     elif direction == '-':
         return '<'+node
     else:
-        raise ValueError()
+        raise ValueError(f"Invalid node direction: {direction}")
 
 def _node_convert(node_id):
     direction, node = node_id[0], node_id[1:]
