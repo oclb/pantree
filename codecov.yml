@@ -18,4 +18,4 @@ ignore:
   - "scripts/**"
   - "notebooks/**"
   - "setup.py"
-  - "graph_var/evaluating_functions.py"  # Can be excluded if not actively used
+  - "pantree/evaluating_functions.py"  # Can be excluded if not actively used
