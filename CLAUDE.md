@@ -37,7 +37,6 @@ pantree/              # Main package
   gfa.py              # GFA file parsing
   genotype.py         # Genotype counting per walk
   walk_variants.py    # Haplotype variant consolidation
-  evaluating_functions.py  # VCF INFO field definitions
   utils.py            # Node/edge complement helpers
   logger.py           # Custom logging with memory tracking
 tests/                # pytest suite with GFA/VCF fixtures in tests/data/
