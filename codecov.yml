@@ -18,4 +18,3 @@ ignore:
   - "scripts/**"
   - "notebooks/**"
   - "setup.py"
-  - "pantree/evaluating_functions.py"  # Can be excluded if not actively used
