@@ -1,6 +1,6 @@
 [project]
 name = "pantree"
-version = "0.2.0"
+version = "0.3.0"
 description = "Reference tree-based variant identification and classification in a pangenome graph"
 readme = "README.md"
 requires-python = ">=3.10"
