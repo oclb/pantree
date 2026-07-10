@@ -1,10 +1,25 @@
 """
 Write simplified NetworkX graph to GFA format.
 """
+import json
+
 import networkx as nx
 
 
-def write_GFA(simplified_graph: nx.DiGraph, output_path: str) -> None:
+def _optional_field(tag: str, field_type: str, value: str) -> str:
+    return f"{tag}:{field_type}:{value}"
+
+
+def _flip_orientation(orientation: str) -> str:
+    return '-' if orientation == '+' else '+'
+
+
+def _edge_complement_id(edge_id: tuple[str, str, str, str]) -> tuple[str, str, str, str]:
+    u_segment, u_orient, v_segment, v_orient = edge_id
+    return v_segment, _flip_orientation(v_orient), u_segment, _flip_orientation(u_orient)
+
+
+def write_GFA(simplified_graph: nx.DiGraph, output_path: str, source_gfa: str | None = None) -> None:
     """
     Write a simplified NetworkX graph to GFA format.
     
@@ -14,6 +29,7 @@ def write_GFA(simplified_graph: nx.DiGraph, output_path: str) -> None:
     Args:
         simplified_graph: NetworkX DiGraph with node attributes 'sequence' and 'direction'
         output_path: Path to write the GFA file
+        source_gfa: Optional path to the source GFA file
     """
     
     # Create mapping from bidirectional node pairs to unique segment IDs
@@ -38,7 +54,10 @@ def write_GFA(simplified_graph: nx.DiGraph, output_path: str) -> None:
     
     with open(output_path, 'w') as f:
         # Write header
-        f.write("H\tVN:Z:1.0\n")
+        header_fields = ["H", _optional_field("VN", "Z", "1.0")]
+        if source_gfa is not None:
+            header_fields.append(_optional_field("og", "Z", source_gfa))
+        f.write("\t".join(header_fields) + "\n")
         
         # Write S (Segment) lines
         # For each segment, use the forward orientation node to get the sequence
@@ -47,14 +66,23 @@ def write_GFA(simplified_graph: nx.DiGraph, output_path: str) -> None:
             
             if forward_node in simplified_graph.nodes():
                 sequence = simplified_graph.nodes[forward_node].get('sequence', '*')
+                origin_node = forward_node
             else:
                 # Try without orientation suffix
                 if base_name in simplified_graph.nodes():
                     sequence = simplified_graph.nodes[base_name].get('sequence', '*')
+                    origin_node = base_name
                 else:
                     sequence = '*'
+                    origin_node = None
+
+            if origin_node is not None:
+                original_ids = simplified_graph.nodes[origin_node].get('original_ids', [base_name])
+            else:
+                original_ids = [base_name]
+            origin_tag = _optional_field("oi", "J", json.dumps(original_ids, separators=(',', ':')))
             
-            f.write(f"S\t{segment_id}\t{sequence}\n")
+            f.write(f"S\t{segment_id}\t{sequence}\t{origin_tag}\n")
         
         # Write L (Link) lines
         # Track written edges to avoid duplicates
@@ -89,7 +117,7 @@ def write_GFA(simplified_graph: nx.DiGraph, output_path: str) -> None:
             # Create edge identifier to avoid duplicates
             edge_id = (u_segment, u_orient, v_segment, v_orient)
             
-            if edge_id not in written_edges:
+            if edge_id not in written_edges and _edge_complement_id(edge_id) not in written_edges:
                 written_edges.add(edge_id)
                 # GFA format: L from_segment from_orient to_segment to_orient overlap
                 # Using 0M for overlap (no overlap information)

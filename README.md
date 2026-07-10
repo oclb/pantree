@@ -68,6 +68,18 @@ Simplify a pangenome graph by removing small variants, tips, and contracting pat
 pantree simplify input.gfa simplified.gfa --min-allele-length 1000
 ```
 
+The simplified GFA includes metadata that maps each new segment ID back to the
+input graph. The header includes `og:Z:<input.gfa>`, and each segment line
+includes `oi:J:[...]` with the original segment IDs represented by that
+simplified segment. Artificial terminal helper segments may have `oi:J:[]`
+because they do not correspond to an input graph segment:
+
+```gfa
+H	VN:Z:1.0	og:Z:input.gfa
+S	s1	ACGT	oi:J:["12","13","14"]
+S	s2		oi:J:[]
+```
+
 ## Python API Usage
 ```python
 from pantree import PangenomeGraph, Genotype

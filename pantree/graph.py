@@ -72,7 +72,7 @@ class PangenomeGraph(nx.DiGraph):
 
     @property
     def node_attribute_names(self) -> tuple:
-        return 'direction', 'sequence', 'position', 'right_position', 'tree_position', 'on_reference_path', 'index'
+        return 'direction', 'sequence', 'position', 'right_position', 'tree_position', 'on_reference_path', 'index', 'original_ids'
 
     @property
     def vcf_attribute_names(self) -> tuple:
@@ -166,6 +166,9 @@ class PangenomeGraph(nx.DiGraph):
         logger.info("Loading S lines (nodes)")
         for line in read_gfa_line_by_line(gfa_file, line_types=['S']):
             G.add_binode(line.node_id, line.sequence)
+            if line.original_ids is not None:
+                G.nodes[f'{line.node_id}_+']['original_ids'] = list(line.original_ids)
+                G.nodes[f'{line.node_id}_-']['original_ids'] = list(reversed(line.original_ids))
         logger.info(f"Loaded {len(G.nodes) // 2} binodes")
 
         logger.info("Loading L lines (edges)")
@@ -544,14 +547,17 @@ class PangenomeGraph(nx.DiGraph):
         """
         Adds a binode to the bidirected graph, comprising a node and its complement.
         """
+        original_ids = [] if str(binode) in {'+_terminus', '-_terminus'} else [str(binode)]
         node_data = {key: 0 for key in self.node_attribute_names}
         node_data['sequence'] = seq
         node_data['direction'] = 1
+        node_data['original_ids'] = list(original_ids)
 
         self.add_node(str(binode) + '_+', **node_data)
 
         node_data['sequence'] = sequence_complement(seq)
         node_data['direction'] = -1
+        node_data['original_ids'] = list(original_ids)
 
         self.add_node(str(binode) + '_-', **node_data)
 
@@ -1192,14 +1198,23 @@ class PangenomeGraph(nx.DiGraph):
         def combine_nodes(parent: str, child: str) -> None:
             neighbors = list(simplified_graph.successors(child))
             sequence = simplified_graph.nodes[child]['sequence']
+            child_original_ids = list(simplified_graph.nodes[child].get('original_ids', []))
+            child_complement = node_complement(child)
+            child_complement_original_ids = list(simplified_graph.nodes[child_complement].get('original_ids', []))
+            parent_complement = node_complement(parent)
             simplified_graph.remove_node(child)
-            simplified_graph.remove_node(node_complement(child))
+            simplified_graph.remove_node(child_complement)
             for neighbor in neighbors:
                 simplified_graph.add_edge(parent, neighbor)
                 simplified_graph.add_edge(*edge_complement((parent, neighbor)))
             simplified_graph.nodes[parent]['sequence'] += sequence
-            simplified_graph.nodes[node_complement(parent)]['sequence'] = sequence + \
-                simplified_graph.nodes[node_complement(parent)]['sequence']
+            parent_original_ids = list(simplified_graph.nodes[parent].get('original_ids', []))
+            simplified_graph.nodes[parent]['original_ids'] = parent_original_ids + child_original_ids
+            simplified_graph.nodes[parent_complement]['sequence'] = sequence + \
+                simplified_graph.nodes[parent_complement]['sequence']
+            parent_complement_original_ids = list(simplified_graph.nodes[parent_complement].get('original_ids', []))
+            simplified_graph.nodes[parent_complement]['original_ids'] = child_complement_original_ids + \
+                parent_complement_original_ids
 
 
         node_in_degrees = {node: degree for node, degree in simplified_graph.in_degree()}

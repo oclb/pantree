@@ -80,7 +80,7 @@ def simplify_graph(gfa_file: str, output_gfa: str, ref_name: str = "GRCh38",
     if logger:
         logger.info(f"Simplified graph has {simplified_graph.number_of_nodes()} nodes and {simplified_graph.number_of_edges()} edges")
     
-    write_GFA(simplified_graph, output_gfa)
+    write_GFA(simplified_graph, output_gfa, source_gfa=gfa_file)
     
     if logger:
         logger.info(f"Wrote simplified GFA file: {output_gfa}")
