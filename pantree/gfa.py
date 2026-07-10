@@ -1,8 +1,9 @@
 """
 GFA file parsing utilities.
 """
-import re
 import gzip
+import json
+import re
 from dataclasses import dataclass
 
 
@@ -69,10 +70,24 @@ class GFAWalkLine:
 class GFANodeLine:
     node_id: str
     sequence: str
+    original_ids: list[str] | None = None
 
     @classmethod
     def from_parts(cls, parts: list[str]):
-        return cls(parts[1], parts[2])
+        return cls(parts[1], parts[2], cls._parse_original_ids(parts[3:]))
+
+    @staticmethod
+    def _parse_original_ids(optional_fields: list[str]) -> list[str] | None:
+        for field in optional_fields:
+            if not field.startswith('oi:J:'):
+                continue
+            try:
+                original_ids = json.loads(field[5:])
+            except json.JSONDecodeError:
+                return None
+            if isinstance(original_ids, list):
+                return [str(original_id) for original_id in original_ids]
+        return None
 
 
 @dataclass

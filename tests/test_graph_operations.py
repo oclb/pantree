@@ -373,6 +373,30 @@ class TestGraphSimplification(unittest.TestCase):
         # Simplified graph should have fewer or equal edges
         self.assertLessEqual(simplified.number_of_edges(), original_edges)
 
+    def test_contract_paths_preserves_original_ids(self):
+        """Test path contraction records original segment IDs in sequence order."""
+        original_ids_before = {
+            node: list(data.get('original_ids', []))
+            for node, data in self.G.nodes(data=True)
+        }
+        simplified = self.G.simplify_subgraph(minimum_allele_length=1000)
+        original_id_lists = [
+            data.get('original_ids', [])
+            for node, data in simplified.nodes(data=True)
+            if node.endswith('_+') and data.get('original_ids')
+        ]
+
+        self.assertTrue(any(len(original_ids) > 1 for original_ids in original_id_lists))
+        for original_ids in original_id_lists:
+            self.assertTrue(all(not node_id.endswith(('_+', '_-')) for node_id in original_ids))
+        self.assertEqual(
+            original_ids_before,
+            {
+                node: list(data.get('original_ids', []))
+                for node, data in self.G.nodes(data=True)
+            }
+        )
+
 class TestMissingInversion(unittest.TestCase):
     """Test missing inversion detection"""
 

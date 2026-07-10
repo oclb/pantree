@@ -1,6 +1,8 @@
 from pantree.cli import cli
+from pantree.graph import PangenomeGraph
 from click.testing import CliRunner
 import gzip
+import json
 import os
 import tempfile
 
@@ -115,3 +117,44 @@ def test_cli_gfa2vcf_and_consolidate_with_bgzf_vcf(tmp_path):
     assert result.exit_code == 0, result.output
     assert output_vcf.exists()
     assert output_vcf.read_text().startswith('##fileformat=VCFv4.2')
+
+
+def test_cli_simplify_writes_origin_metadata(tmp_path):
+    """Test simplify output maps simplified segments to original GFA segment IDs."""
+    runner = CliRunner()
+    gfa_file = os.path.join(os.path.dirname(__file__), "data", "simple_nested.gfa")
+    simplified_gfa = tmp_path / "simple_nested.simplified.gfa"
+
+    result = runner.invoke(
+        cli,
+        ['simplify', gfa_file, str(simplified_gfa), '--ref-name', 'ref']
+    )
+
+    assert result.exit_code == 0, result.output
+    lines = simplified_gfa.read_text().splitlines()
+    assert lines[0].split('\t') == ['H', 'VN:Z:1.0', f'og:Z:{gfa_file}']
+
+    segment_origin_lists = []
+    origins_by_segment = {}
+    for line in lines:
+        if not line.startswith('S\t'):
+            continue
+        fields = line.split('\t')
+        origin_fields = [field for field in fields[3:] if field.startswith('oi:J:')]
+        assert len(origin_fields) == 1
+        original_ids = json.loads(origin_fields[0][5:])
+        assert all(isinstance(original_id, str) for original_id in original_ids)
+        assert all(not original_id.endswith(('_+', '_-')) for original_id in original_ids)
+        assert all('terminus' not in original_id for original_id in original_ids)
+        origins_by_segment[fields[1]] = original_ids
+        segment_origin_lists.append(original_ids)
+
+    assert segment_origin_lists
+    assert any(len(original_ids) > 1 for original_ids in segment_origin_lists)
+    assert any(len(original_ids) == 0 for original_ids in segment_origin_lists)
+
+    reread = PangenomeGraph.from_gfa_line_by_line(str(simplified_gfa), ref_name='ref')
+    assert reread.number_of_nodes() > 0
+    for segment_id, original_ids in origins_by_segment.items():
+        assert reread.nodes[f'{segment_id}_+']['original_ids'] == original_ids
+        assert reread.nodes[f'{segment_id}_-']['original_ids'] == list(reversed(original_ids))

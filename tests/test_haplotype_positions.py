@@ -80,7 +80,8 @@ class TestHaplotypePositions(unittest.TestCase):
             # Check if node has any haplotype position data
             # Haplotype keys are in format: sample#haplotype#contig (e.g., 'ref#0#0', 'sample1#1#0')
             # Exclude known node attributes
-            excluded_keys = {'direction', 'sequence', 'position', 'right_position', 'distance_from_reference', 'on_reference_path'}
+            excluded_keys = {'direction', 'sequence', 'position', 'right_position', 'distance_from_reference',
+                             'on_reference_path', 'original_ids'}
             haplotype_keys = [key for key in node_data.keys() if key not in excluded_keys and isinstance(node_data[key], (int, float))]
             if not haplotype_keys:
                 nodes_without_pos.append(node)
@@ -99,7 +100,8 @@ class TestHaplotypePositions(unittest.TestCase):
                 continue
 
             # Check for haplotype keys (exclude known node attributes)
-            excluded_keys = {'direction', 'sequence', 'position', 'right_position', 'distance_from_reference', 'on_reference_path'}
+            excluded_keys = {'direction', 'sequence', 'position', 'right_position', 'distance_from_reference',
+                             'on_reference_path', 'original_ids'}
             haplotype_keys = [key for key in node_data.keys() if key not in excluded_keys]
 
             for haplo_key in haplotype_keys:
@@ -127,7 +129,8 @@ class TestHaplotypePositions(unittest.TestCase):
                 continue
 
             # Check for haplotype keys (exclude known node attributes)
-            excluded_keys = {'direction', 'sequence', 'position', 'right_position', 'distance_from_reference', 'on_reference_path'}
+            excluded_keys = {'direction', 'sequence', 'position', 'right_position', 'distance_from_reference',
+                             'on_reference_path', 'original_ids'}
             haplotype_keys = [key for key in node_data.keys() if key not in excluded_keys]
 
             if not haplotype_keys:
@@ -180,7 +183,8 @@ class TestHaplotypePositions(unittest.TestCase):
                 continue
 
             # Haplotype keys are in format: sample#haplotype#contig (e.g., 'ref#0#0', 'sample1#1#0')
-            excluded_keys = {'direction', 'sequence', 'position', 'right_position', 'distance_from_reference', 'on_reference_path'}
+            excluded_keys = {'direction', 'sequence', 'position', 'right_position', 'distance_from_reference',
+                             'on_reference_path', 'original_ids'}
             haplotype_keys = [key for key in node_data.keys() if key not in excluded_keys and isinstance(node_data[key], (int, float))]
             if haplotype_keys:
                 nodes_with_positions += 1
@@ -278,7 +282,8 @@ class TestHaplotypePositionsC4A(unittest.TestCase):
 
             node_data = self.G.nodes[node]
             # Check for any haplotype position data (exclude standard node attributes)
-            excluded_keys = {'direction', 'sequence', 'position', 'right_position', 'distance_from_reference', 'on_reference_path'}
+            excluded_keys = {'direction', 'sequence', 'position', 'right_position', 'distance_from_reference',
+                             'on_reference_path', 'original_ids'}
             haplotype_keys = [key for key in node_data.keys() if key not in excluded_keys and isinstance(node_data[key], (int, float))]
             if not haplotype_keys:
                 nodes_without_pos.append(node)
