@@ -238,9 +238,10 @@ class _VariantRecord:
             self.qual,
             self.filter_field,
             self.info,
-            self.format_field
         ]
-        fields.extend(self.genotype_records)
+        if self.genotype_records:
+            fields.append(self.format_field)
+            fields.extend(self.genotype_records)
         return '\t'.join(fields) + '\n'
 
     def sort_key(self) -> tuple[str, int, int, str]:
@@ -472,9 +473,10 @@ def _build_vcf_header(chr_name: str,
     # Generate VCF metadata with INFO field headers
     meta_info = '##fileformat=VCFv4.2\n'
     meta_info += f'##source=pantree v{__version__}\n'
-    meta_info += '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype: 1 if ALT is present, 0 if absent, . if missing">\n'
-    meta_info += '##FORMAT=<ID=CR,Number=R,Type=Integer,Description="Number of times visiting the REF allele">\n'
-    meta_info += '##FORMAT=<ID=CA,Number=A,Type=Integer,Description="Number of times visiting the ALT allele">\n'
+    if sample_ids:
+        meta_info += '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype: 1 if ALT is present, 0 if absent, . if missing">\n'
+        meta_info += '##FORMAT=<ID=CR,Number=R,Type=Integer,Description="Number of times visiting the REF allele">\n'
+        meta_info += '##FORMAT=<ID=CA,Number=A,Type=Integer,Description="Number of times visiting the ALT allele">\n'
 
     # Add INFO field headers
     for field in info_fields:
@@ -483,7 +485,9 @@ def _build_vcf_header(chr_name: str,
     meta_info += f'##contig=<ID={chr_name}>\n'
 
     # Add column header line
-    header_names = ['CHROM', 'POS', 'ID', 'REF', 'ALT', 'QUAL', 'FILTER', 'INFO', 'FORMAT'] + sample_ids
+    header_names = ['CHROM', 'POS', 'ID', 'REF', 'ALT', 'QUAL', 'FILTER', 'INFO']
+    if sample_ids:
+        header_names += ['FORMAT'] + sample_ids
     meta_info += '#' + '\t'.join(header_names) + '\n'
 
     return meta_info

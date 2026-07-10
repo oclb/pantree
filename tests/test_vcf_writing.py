@@ -61,20 +61,17 @@ class TestVCFWriting(unittest.TestCase):
             with open(vcf_path, 'r') as f:
                 lines = f.readlines()
             
-            # Should have FORMAT column header but no sample columns
             header_line = [l for l in lines if l.startswith('#CHROM')][0]
             columns = header_line.strip().split('\t')
             
-            # Should have standard VCF columns plus FORMAT
-            self.assertIn('#CHROM', columns)
-            self.assertIn('POS', columns)
-            self.assertIn('REF', columns)
-            self.assertIn('ALT', columns)
-            self.assertIn('FORMAT', columns)
-            
-            # Should NOT have sample columns (no genotypes computed)
-            # The FORMAT column is the last column when no samples
-            self.assertEqual(columns[-1], 'FORMAT')
+            self.assertEqual(
+                columns,
+                ['#CHROM', 'POS', 'ID', 'REF', 'ALT', 'QUAL', 'FILTER', 'INFO']
+            )
+            self.assertFalse(any(line.startswith('##FORMAT=') for line in lines))
+            for line in lines:
+                if not line.startswith('#'):
+                    self.assertEqual(len(line.rstrip('\n').split('\t')), 8)
         finally:
             if os.path.exists(vcf_path):
                 os.unlink(vcf_path)
@@ -162,12 +159,6 @@ class TestGenotypeAggregation(unittest.TestCase):
                 # At least one dict should have entries
                 self.assertTrue(genotype.ref_visited.any() or len(genotype.alt_counts) > 0)
     
-    @unittest.skip("get_sample_vcf_info method removed during refactor")
-    def test_get_sample_vcf_info(self):
-        """Test get_sample_vcf_info method"""
-        pass
-
-
 class TestEdgeCases(unittest.TestCase):
     """Test edge cases: single node, no variants, etc."""
     
@@ -228,11 +219,5 @@ class TestEdgeCases(unittest.TestCase):
             if os.path.exists(vcf_path):
                 os.unlink(vcf_path)
     
-    @unittest.skip("allele_count method removed during refactor")
-    def test_allele_count_empty_variants(self):
-        """Test allele_count on graph with no variants"""
-        pass
-
-
 if __name__ == '__main__':
     unittest.main()

@@ -373,12 +373,6 @@ class TestGraphSimplification(unittest.TestCase):
         # Simplified graph should have fewer or equal edges
         self.assertLessEqual(simplified.number_of_edges(), original_edges)
 
-    @unittest.skip("allele_count method removed during refactor")
-    def test_allele_count(self):
-        """Test that allele counts are computed"""
-        pass
-
-
 class TestMissingInversion(unittest.TestCase):
     """Test missing inversion detection"""
 

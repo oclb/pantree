@@ -17,4 +17,3 @@ ignore:
   - "tests/**"
   - "scripts/**"
   - "notebooks/**"
-  - "setup.py"

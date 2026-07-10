@@ -5,6 +5,7 @@ import unittest
 import os
 import tempfile
 import gzip
+import logging
 from Bio import bgzf
 from pantree.graph import PangenomeGraph
 from pantree.vcf import (
@@ -25,7 +26,7 @@ class TestVCFMetadata(unittest.TestCase):
         
         # Check that we have the expected INFO fields
         field_ids = [field.id for field in info_fields]
-        expected_fields = ['NR', 'VT', 'TP', 'RC', 'AC', 'AN', 'HP', 'TR_MOTIF', 'NIA']
+        expected_fields = ['NR', 'VT', 'TP', 'RC', 'AC', 'AN', 'HP', 'TR_MOTIF', 'NIA', 'UIDX']
         
         for expected_id in expected_fields:
             self.assertIn(expected_id, field_ids, f"Missing INFO field: {expected_id}")
@@ -397,12 +398,60 @@ class TestWriteVCF(unittest.TestCase):
             # Find header line
             header_line = [l for l in lines if l.startswith('#CHROM')][0]
             
-            # Should only have fixed columns, no sample columns
             columns = header_line.strip().split('\t')
-            self.assertEqual(len(columns), 9, "Should have only 9 fixed columns without samples")
+            self.assertEqual(
+                columns,
+                ['#CHROM', 'POS', 'ID', 'REF', 'ALT', 'QUAL', 'FILTER', 'INFO']
+            )
+            self.assertFalse(any(line.startswith('##FORMAT=') for line in lines))
+            for line in lines:
+                if not line.startswith('#'):
+                    self.assertEqual(len(line.rstrip('\n').split('\t')), 8)
             
         finally:
             # Clean up
+            if os.path.exists(vcf_path):
+                os.remove(vcf_path)
+
+    def test_write_vcf_includes_haplotype_positions(self):
+        """Test HP metadata and INFO values from priority-sample haplotype positions."""
+        test_dir = os.path.dirname(__file__)
+        gfa_file = os.path.join(test_dir, "data", "simple_nested.gfa")
+        graph = PangenomeGraph.from_gfa_line_by_line(
+            gfa_file,
+            ref_name='ref',
+            priority_dict={
+                'ref': 0,
+                'sample1': 1,
+                'sample2': 2,
+            }
+        )
+
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.vcf', delete=False) as f:
+            vcf_path = f.name
+
+        try:
+            write_vcf_from_graph(
+                graph=graph,
+                gfa_path=None,
+                vcf_filename=vcf_path,
+                chr_name='chr1',
+                logger=logging.getLogger('pantree'),
+                exclude_terminus=True
+            )
+
+            with open(vcf_path, 'r') as f:
+                lines = f.readlines()
+
+            self.assertTrue(any(line.startswith('##INFO=<ID=HP') for line in lines))
+            variant_infos = [
+                line.split('\t')[7]
+                for line in lines
+                if not line.startswith('#')
+            ]
+            self.assertTrue(any('HP=ref#0#0:' in info for info in variant_infos))
+            self.assertTrue(any('sample1#1#0:' in info for info in variant_infos))
+        finally:
             if os.path.exists(vcf_path):
                 os.remove(vcf_path)
 

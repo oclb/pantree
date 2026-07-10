@@ -1,5 +1,5 @@
 """
-Test suite for graph_var.walk_variants module.
+Test suite for pantree.walk_variants module.
 
 This module tests the Allele class and related functions, which provide data structures
 for working with genomic sequences at specific positions on a reference genome.
