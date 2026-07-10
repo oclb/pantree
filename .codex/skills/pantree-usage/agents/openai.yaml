@@ -1,0 +1,4 @@
+interface:
+  display_name: "Pantree Usage"
+  short_description: "Run and explain Pantree workflows"
+  default_prompt: "Use $pantree-usage to run or explain a Pantree workflow."
