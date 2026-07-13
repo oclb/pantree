@@ -1,0 +1,4 @@
+interface:
+  display_name: "Pantree Setup"
+  short_description: "Set up and validate a Pantree environment"
+  default_prompt: "Use $pantree-setup to install and validate Pantree."
