@@ -108,6 +108,29 @@ def test_missing_chromosome_is_not_covered_by_other_chromosome(tmp_path):
     assert data['only1_GT'].to_list() == ['0', '.']
 
 
+@pytest.mark.parametrize('source_direction', ['+', '-'])
+def test_trans_reference_counts_use_source_chromosome(tmp_path, source_direction):
+    extra = (f'L\t2\t{source_direction}\t12\t+\t0M\n'
+             'W\tonly2\t0\tcontig\t0\t6\t>11>12>14\n'
+             'W\tonly1\t0\tcontig\t0\t6\t>1>2>4\n')
+    graph, path = load(tmp_path, extra)
+    _, _, data = export(graph, path, tmp_path)
+    row = data.filter(data['TRANS_CHROM'].is_not_null()).row(0, named=True)
+    assert (row['only2_GT'], row['only2_CR'], row['only2_CA']) == ('.', '0', '0')
+    assert (row['only1_GT'], row['only1_CR'], row['only1_CA']) == ('0', '1', '0')
+
+
+def test_trans_source_counts_sum_multiple_tree_continuations(tmp_path):
+    extra = ('S\t20\tAG\nL\t2\t+\t20\t+\t0M\nL\t20\t+\t4\t+\t0M\n'
+             'L\t2\t+\t12\t+\t0M\nW\tbranch\t0\tx\t0\t8\t>1>2>20>4\n')
+    graph, path = load(tmp_path, extra)
+    assert len(graph.reference_tree_edges(('2_+', '12_+'))) == 2
+    _, _, data = export(graph, path, tmp_path)
+    row = data.filter(data['TRANS_CHROM'].is_not_null()).row(0, named=True)
+    assert row['branch_CR'] == '1'
+    assert row['sample_CR'] == '0,1'
+
+
 def test_mc_fragmented_walks_keep_haplotype_and_missingness(tmp_path):
     def clipped(text):
         return text.replace('W\tsample\t1\tcontigB\t0\t6\t>11>13>14',

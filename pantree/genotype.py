@@ -176,8 +176,10 @@ class Genotype:
             if not self.coverage_by_chrom.get(chrom) or (index >= 0 and high <= gaps[index][1]):
                 self.missing_variants.add(edge)
 
-    def get_ref_count(self, edge_idx: int) -> int:
-        """Get ref count for an edge by its index."""
+    def get_ref_count(self, edge_idx: int | list[int]) -> int:
+        """Get the count of one tree edge or a set of source continuations."""
+        if isinstance(edge_idx, list):
+            return sum(self.get_ref_count(index) for index in edge_idx)
         if edge_idx in self.ref_counts_multi:
             return self.ref_counts_multi[edge_idx]
         elif self.ref_visited[edge_idx]:
@@ -185,7 +187,7 @@ class Genotype:
         else:
             return 0
 
-    def variant_record(self, variant_edge: tuple[str, str], reference_edge: tuple[str, str], ref_edge_idx: int) -> tuple[int|None, int, int|None]:
+    def variant_record(self, variant_edge: tuple[str, str], reference_edge: tuple[str, str] | None, ref_edge_idx: int | list[int]) -> tuple[int|None, int, int|None]:
         """
         For variant edge e, returns (GT, CR, CA) where GT is the genotype,
         CR is the reference allele count, and CA is the alternative allele count.

@@ -198,7 +198,7 @@ class PangenomeGraph(nx.DiGraph):
         logger.info("Loading W/P lines (walks)")
         walk_count = 0
         for line in read_gfa_line_by_line(gfa_file, line_types=['W', 'P']):
-            # Check if haplotype name starts with ref_name (e.g., 'GRCh38#0#chr20' starts with 'GRCh38')
+            # Match the sample field; chromosome names come from its walks.
             hit_reference = line.sample_name == ref_name
             if hit_reference:
                 chrom = line.sequence_name or line.hap_name
@@ -630,11 +630,27 @@ class PangenomeGraph(nx.DiGraph):
         return edge if self.edges[edge]['is_representative'] else edge_complement(edge)
 
     def reference_tree_edge(self, variant_edge):
+        if self.is_trans_chromosomal(variant_edge):
+            raise ValueError('Cross-chromosome edges can have multiple source-side baselines; use reference_tree_edges')
         _, v = self.positive_variant_edge(variant_edge)
         if self.is_inversion(variant_edge):
             v = self.positive_node(v)
         w = self.parent_in_tree(v)
         return w, v
+
+    def reference_tree_edges(self, variant_edge) -> list[tuple[str, str]]:
+        """Tree edges counted as the reference continuation of a variant.
+
+        A cross-chromosome breakend counts source-side continuations: outgoing
+        tree edges for a forward source, or the incoming edge for a reverse one.
+        """
+        if not self.is_trans_chromosomal(variant_edge):
+            return [self.reference_tree_edge(variant_edge)]
+        u = variant_edge[0]
+        source = self.positive_node(u)
+        if self.direction(u) == 1:
+            return list(self.reference_tree.out_edges(source))
+        return list(self.reference_tree.in_edges(source))
 
     def positive_variant_edge(self, edge: tuple):
         return edge if self.direction(edge[0]) == 1 or self.is_inversion(edge) else edge_complement(edge)

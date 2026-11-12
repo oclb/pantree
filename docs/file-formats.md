@@ -35,6 +35,10 @@ to source orientation. `TRANS_CHROM` retains the destination chromosome; no prec
 partner position or reconstructed rearrangement is claimed. The graph edge ID
 retains both oriented segment IDs. See the [VCF 4.2 single-breakend specification](https://samtools.github.io/hts-specs/VCFv4.2.pdf).
 
+For these breakends, `CR` counts tree-edge continuations on the source chromosome:
+outgoing tree edges for a forward source, or the incoming edge for a reverse
+source. Destination-only coverage cannot supply a reference call on `CHROM`.
+
 ## Simplified GFA
 
 Simplified output is GFA 1.0 with `S` and `L` records. Links use `0M` overlap because simplification does not retain original overlap information.
