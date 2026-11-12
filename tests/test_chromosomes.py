@@ -190,8 +190,9 @@ def test_reference_offsets_and_invalid_reference_inputs(tmp_path):
     graph, path = load(tmp_path, transform=lambda s: s.replace('ref\t0\tchr2\t0\t6', 'ref\t0\tchr2\t100\t106'))
     _, _, data = export(graph, path, tmp_path)
     assert data['POS'].to_list() == [4, 104]
-    with pytest.raises(ValueError, match='No reference walks'):
-        PangenomeGraph.from_gfa(str(path), ref_name='absent')
+    result = CliRunner().invoke(cli, ['gfa2vcf', str(path), str(tmp_path / 'missing.vcf'), '--ref-name', 'absent'])
+    assert result.exit_code != 0
+    assert 'No reference walks' in result.output
     path.write_text(FIXTURE.read_text() + 'W\tref\t0\tchr1\t6\t9\t>1\n')
     with pytest.raises(ValueError, match='Multiple reference walks'):
         PangenomeGraph.from_gfa(str(path), ref_name='ref')

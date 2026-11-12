@@ -67,6 +67,8 @@ def gfa2vcf(gfa_file, vcf_file, chr_id, ref_name, no_genotypes, log_path, verbos
         dfs_method=dfs_method_func,
         priority_dict=priority_dict
     )
+    if not G.reference_starts:
+        raise click.ClickException(f"No reference walks found for sample {ref_name!r}")
 
     # Generate VCF
     if no_genotypes:

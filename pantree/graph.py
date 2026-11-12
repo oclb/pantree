@@ -229,8 +229,6 @@ class PangenomeGraph(nx.DiGraph):
 
         logger.info(f"Loaded {len(G.nodes) / 2:.0f} binodes, {len(G.edges) / 2:.0f} biedges")
 
-        if not G.reference_paths:
-            raise ValueError(f"No reference walks found for sample {ref_name!r}")
         if len(G.reference_paths) > 1:
             from .chromosomes import initialize_chromosomes
             initialize_chromosomes(G, walk_start_nodes, walk_end_nodes, dfs_method)
