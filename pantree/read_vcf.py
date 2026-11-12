@@ -29,14 +29,12 @@ def read_vcf_to_lazyframe(vcf_path: str) -> pl.LazyFrame:
     # Read VCF data as LazyFrame
     result = pl.scan_csv(vcf_path, separator='\t', has_header=True, comment_prefix='##')
 
-    # Build regex pattern dynamically from INFO fields
-    pattern_parts = [f'{field}=([^;]+)' for field in info_fields]
-    pattern = ';'.join(pattern_parts)
-
-    # Parse INFO field into separate columns using generated regex
-    result = result.with_columns(
-        pl.col('INFO').str.extract_groups(pattern).struct.rename_fields(info_fields)
-    ).unnest('INFO')
+    # INFO tags are optional and may appear in any order.
+    if info_fields:
+        result = result.with_columns([
+            pl.col('INFO').str.extract(r'(?:^|;)' + re.escape(name) + r'=([^;]+)', 1).alias(name)
+            for name in info_fields
+        ]).drop('INFO')
 
     # Parse genotype fields for each sample
     if format_fields:

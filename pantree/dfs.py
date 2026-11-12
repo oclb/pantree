@@ -8,7 +8,7 @@ import operator
 # TODO add new positions to VCF
 
 def max_weight_dfs_tree(G: nx.DiGraph,
-                        reference_path: list, **kwargs) -> nx.DiGraph:
+                        reference_path: list, reference_paths: list[list] | None = None, **kwargs) -> nx.DiGraph:
     """
     Perform a depth-first search (DFS) prioritizing higher weight edges and return a DFS tree.
     :param G: A NetworkX directed graph
@@ -19,8 +19,11 @@ def max_weight_dfs_tree(G: nx.DiGraph,
     visited = set()
     stack = []
     def visit_node(parent, current_node):
+        if current_node in visited:
+            return
         # visit current_node
         visited.add(current_node)
+        dfs_tree.add_node(current_node)
         if parent is not None:
             assert G.has_edge(parent, current_node)
             dfs_tree.add_edge(parent, current_node)
@@ -33,12 +36,9 @@ def max_weight_dfs_tree(G: nx.DiGraph,
             if neighbor not in visited:
                 stack.append((current_node, neighbor))
 
-    for i in range(len(reference_path)):
-        if i == 0:
-            reference_edge = (None, reference_path[0])
-        else:
-            reference_edge = (reference_path[i - 1], reference_path[i])
-        visit_node(*reference_edge)
+    for path in reference_paths or [reference_path]:
+        for i, node in enumerate(path):
+            visit_node(None if i == 0 else path[i - 1], node)
 
     while stack:
         parent, current_node = stack.pop()
@@ -48,7 +48,7 @@ def max_weight_dfs_tree(G: nx.DiGraph,
     return dfs_tree
 
 def assign_node_directions(G: nx.DiGraph,
-                        reference_path: list) -> None:
+                        reference_path: list, reference_paths: list[list] | None = None) -> None:
     """
     Perform a depth-first search (DFS) prioritizing higher weight edges and return a DFS tree.
 
@@ -82,12 +82,9 @@ def assign_node_directions(G: nx.DiGraph,
             stack.append((current_node, neighbor, current_direction))
 
     # Initialize the search at the linear reference path so that these nodes all have the same orientation
-    for i in range(len(reference_path)):
-        if i == 0:
-            reference_edge = (None, reference_path[0])
-        else:
-            reference_edge = (reference_path[i - 1], reference_path[i])
-        visit_node(*reference_edge, 1)
+    for path in reference_paths or [reference_path]:
+        for i, node in enumerate(path):
+            visit_node(None if i == 0 else path[i - 1], node, 1)
 
     while True:
         while stack:
@@ -99,13 +96,13 @@ def assign_node_directions(G: nx.DiGraph,
         if num_unvisited == 0:
             break
         print(f'Visiting another connected component, with at most {num_unvisited} nodes')
-        unvisited_node = unvisited.pop()
+        unvisited_node = min(unvisited)
         visit_node(None, unvisited_node, 1)
 
 
 def haplo_contiguous_dfs_tree(G: nx.DiGraph,
                         haplo_priorities: dict[str, int],
-                        reference_path: list) -> nx.DiGraph:
+                        reference_path: list, reference_paths: list[list] | None = None) -> nx.DiGraph:
 
     # Sort haplotype labels by priority (lower priority value = higher precedence)
     # Ties are allowed (same priority value)
@@ -182,12 +179,9 @@ def haplo_contiguous_dfs_tree(G: nx.DiGraph,
     visited = set()
     stack = []
 
-    for i in range(len(reference_path)):
-        if i == 0:
-            reference_edge = (None, reference_path[0])
-        else:
-            reference_edge = (reference_path[i - 1], reference_path[i])
-        visit_node(*reference_edge, haplo_labels[0])
+    for path in reference_paths or [reference_path]:
+        for i, node in enumerate(path):
+            visit_node(None if i == 0 else path[i - 1], node, haplo_labels[0] if haplo_labels else 'other')
 
     while stack:
         tup = stack.pop()

@@ -1,0 +1,23 @@
+H	VN:Z:1.1	RS:Z:ref
+S	1	AAA
+S	2	C
+S	3	T
+S	4	GG
+S	11	TTT
+S	12	A
+S	13	G
+S	14	CC
+L	1	+	2	+	0M
+L	1	+	3	+	0M
+L	2	+	4	+	0M
+L	3	+	4	+	0M
+L	11	+	12	+	0M
+L	11	+	13	+	0M
+L	12	+	14	+	0M
+L	13	+	14	+	0M
+W	ref	0	chr1	0	6	>1>2>4
+W	ref	0	chr2	0	6	>11>12>14
+W	sample	1	contigA	0	6	>1>3>4
+W	sample	1	contigB	0	6	>11>13>14
+W	sample	2	contigC	0	6	>1>2>4
+W	sample	2	contigD	0	6	>11>12>14

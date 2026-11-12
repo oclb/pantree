@@ -12,11 +12,42 @@ Pantree constructs a directed DFS tree rooted along the requested reference. Tre
 
 The default `max_weight` DFS favors heavily used edges. The `contiguous` method attempts to remain on individual priority-sample haplotypes. Priority-sample order controls which haplotypes are preferred when a traversal switches.
 
+## Chromosome assignment
+
+A whole-genome graph has two terminal binodes per reference chromosome. Its
+reference tree is stored as a forest with one root per chromosome. Both DFS
+methods seed the reference paths before extending their branches. Each node and
+its complement inherit one chromosome from their tree ancestry. An edge between
+different chromosomes is therefore always a variant edge.
+
+For a reported variant edge `(u,v)`, `CHROM` is the chromosome of `u`. If the
+chromosome of `v` differs, the directed edge has a `trans_chrom` property containing
+that single chromosome name. The VCF writer exports it as `TRANS_CHROM`. The
+complement edge has the opposite source and destination chromosomes. Cross-chromosome
+records retain the input link's representative orientation.
+
+Chromosome assignment depends on the tree. Shared reference segments are owned
+by the first reference chromosome in lexicographic order. Branches with no forward
+route from a reference are attached through terminal edges, using a nearby
+reference to choose the root. Components with no connection to any reference use
+the first chromosome's root; their assigned coordinates are projections and do
+not establish a biological chromosome location.
+
+`reference_paths` and `chromosome_termini` expose the per-chromosome paths and
+terminal pairs. The legacy `reference_path` remains the first path. Use
+`chromosome(node)` and `termini_for(node)` for chromosome-aware code. Low-level
+`count_edge_visits` and graph simplification still require a single chromosome.
+
 ## Coordinates and genotypes
 
 VCF coordinates derive from positions along the named reference walk. Pantree counts traversal of variant edges by each input walk to construct genotypes. Missingness is inferred from the portions of the reference spanned by a walk; disable this inference for graphs whose reference representation violates those assumptions.
 
 When priority samples are supplied, Pantree can also record positions relative to those haplotypes. Indels follow the VCF requirement that REF and ALT be non-empty, so Pantree may prepend an anchoring base and decrement the position.
+
+Whole-genome missingness is evaluated separately for each chromosome. Walk
+fragments are combined within a sample haplotype, and a walk crossing chromosomes
+contributes a separate coverage interval for each contiguous chromosome run.
+Coverage on another chromosome cannot turn a missing genotype into reference.
 
 ## Consolidation
 
