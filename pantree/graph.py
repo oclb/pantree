@@ -411,10 +411,10 @@ class PangenomeGraph(nx.DiGraph):
         self.add_binode(plus_terminus)
         self.add_binode(minus_terminus)
 
-        for source_node in source_nodes:
+        for source_node in sorted(source_nodes):
             self.add_biedge(plus_terminus + '_+', source_node)
 
-        for sink_node in sink_nodes:
+        for sink_node in sorted(sink_nodes):
             self.add_biedge(sink_node, minus_terminus + '_+')
 
         if self.reference_path == []:
@@ -472,7 +472,7 @@ class PangenomeGraph(nx.DiGraph):
 
         extend_reachable(root)
         connected = []
-        for nodes in (self.reference_path, list(positive_subgraph.nodes)):
+        for nodes in (self.reference_path, sorted(positive_subgraph.nodes)):
             for node in nodes:
                 if node not in reachable and node in positive_subgraph:
                     self.add_biedge(root, node)
@@ -1224,7 +1224,7 @@ class PangenomeGraph(nx.DiGraph):
                 tips.append(node)
 
         nodes_to_delete = []
-        for tip in tips:
+        for tip in sorted(tips):
             node = tip
             while node_in_degrees[node] == 1 and node_out_degrees[node] == 0:
                 parent = next(simplified_graph.predecessors(node))
@@ -1247,10 +1247,11 @@ class PangenomeGraph(nx.DiGraph):
         """
 
         def combine_nodes(parent: str, child: str) -> None:
-            neighbors = list(simplified_graph.successors(child))
+            neighbors = sorted(simplified_graph.successors(child))
             sequence = simplified_graph.nodes[child]['sequence']
             child_original_ids = list(simplified_graph.nodes[child].get('original_ids', []))
             child_complement = node_complement(child)
+            complement_sequence = simplified_graph.nodes[child_complement]['sequence']
             child_complement_original_ids = list(simplified_graph.nodes[child_complement].get('original_ids', []))
             parent_complement = node_complement(parent)
             simplified_graph.remove_node(child)
@@ -1261,7 +1262,7 @@ class PangenomeGraph(nx.DiGraph):
             simplified_graph.nodes[parent]['sequence'] += sequence
             parent_original_ids = list(simplified_graph.nodes[parent].get('original_ids', []))
             simplified_graph.nodes[parent]['original_ids'] = parent_original_ids + child_original_ids
-            simplified_graph.nodes[parent_complement]['sequence'] = sequence + \
+            simplified_graph.nodes[parent_complement]['sequence'] = complement_sequence + \
                 simplified_graph.nodes[parent_complement]['sequence']
             parent_complement_original_ids = list(simplified_graph.nodes[parent_complement].get('original_ids', []))
             simplified_graph.nodes[parent_complement]['original_ids'] = child_complement_original_ids + \
@@ -1271,8 +1272,10 @@ class PangenomeGraph(nx.DiGraph):
         node_in_degrees = {node: degree for node, degree in simplified_graph.in_degree()}
         node_out_degrees = {node: degree for node, degree in simplified_graph.out_degree()}
 
-        starting_points = list(end_points)
-        for node, out_degree in node_out_degrees.items():
+        # Use the same lexical order for both orientations and branch starts.
+        starting_points = sorted(end_points)
+        for node in sorted(node_out_degrees):
+            out_degree = node_out_degrees[node]
             in_degree = node_in_degrees[node]
             if simplified_graph.nodes[node]['direction'] == 1 and (out_degree > 1 or in_degree > 1):
                 starting_points.append(node)
@@ -1281,7 +1284,7 @@ class PangenomeGraph(nx.DiGraph):
         for start in starting_points:
             if start not in simplified_graph:
                 continue
-            for node in list(simplified_graph.successors(start)):
+            for node in sorted(simplified_graph.successors(start)):
                 # Combining a node also removes its complement, which may still be listed here
                 if node not in simplified_graph:
                     continue

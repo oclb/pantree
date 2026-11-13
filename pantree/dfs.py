@@ -156,6 +156,7 @@ def assign_node_directions(G: nx.DiGraph,
             reference_edge = (reference_path[i - 1], reference_path[i])
         visit_node(*reference_edge, 1)
 
+    component_seeds = iter(sorted(unvisited))
     while True:
         while stack:
             parent, current_node, current_direction = stack.pop()
@@ -166,7 +167,8 @@ def assign_node_directions(G: nx.DiGraph,
         if num_unvisited == 0:
             break
         print(f'Visiting another connected component, with at most {num_unvisited} nodes')
-        unvisited_node = unvisited.pop()
+        # Scan the stable order once; visit_node must remove the seed and its complement.
+        unvisited_node = next(node for node in component_seeds if node in unvisited)
         visit_node(None, unvisited_node, 1)
 
 
@@ -206,7 +208,7 @@ def haplo_contiguous_dfs_tree(G: nx.DiGraph,
                 # Assign lowest priority (after all priority haplotypes)
                 priority[neighbor] = len(haplo_labels)
 
-        neighbors = sorted(priority.keys(), key=lambda x: priority[x], reverse=True)
+        neighbors = sorted(priority.keys(), key=lambda x: (priority[x], x), reverse=True)
         return neighbors
 
     def visit_node(parent, current_node, haplo_label):

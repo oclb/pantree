@@ -39,7 +39,7 @@ def write_GFA(simplified_graph: nx.DiGraph, output_path: str, source_gfa: str | 
     
     # Get all unique segments (each bidirectional pair gets one segment ID)
     processed_bases = set()
-    for node in simplified_graph.nodes():
+    for node in sorted(simplified_graph.nodes()):
         # Extract base name (remove orientation suffix _+ or _-)
         if node.endswith('_+') or node.endswith('_-'):
             base_name = node[:-2]
@@ -88,7 +88,7 @@ def write_GFA(simplified_graph: nx.DiGraph, output_path: str, source_gfa: str | 
         # Track written edges to avoid duplicates
         written_edges = set()
         
-        for u, v in simplified_graph.edges():
+        for u, v in sorted(simplified_graph.edges()):
             # Extract base names and orientations
             if u.endswith('_+'):
                 u_base = u[:-2]
