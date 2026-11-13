@@ -16,6 +16,8 @@ The default `max_weight` DFS favors heavily used edges. The `contiguous` method 
 
 VCF coordinates derive from positions along the named reference walk. Pantree counts traversal of variant edges by each input walk to construct genotypes. Missingness is inferred from the portions of the reference spanned by a walk; disable this inference for graphs whose reference representation violates those assumptions.
 
+A segment on the reference walk and its complement share the position at the end of its first occurrence. Every visit contributes to the cumulative offset, so later segments and the end terminus include the lengths of repeated segments. Reference coordinates start at zero for the loaded walk; GFA `W` start offsets apply to haplotype position annotations.
+
 When priority samples are supplied, Pantree can also record positions relative to those haplotypes. Indels follow the VCF requirement that REF and ALT be non-empty, so Pantree may prepend an anchoring base and decrement the position.
 
 ## Consolidation
