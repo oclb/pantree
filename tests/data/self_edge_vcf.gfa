@@ -1,0 +1,10 @@
+H	VN:Z:1.1
+S	1	GTGC
+S	2	TGC
+L	1	-	1	+	0M
+L	1	+	1	-	0M
+L	1	+	1	+	0M
+L	1	+	2	+	0M
+L	2	+	2	-	0M
+W	REF	0	chr1	0	0	>1>2
+W	ALT	0	chr1	0	0	>1<1>1>1>2<2

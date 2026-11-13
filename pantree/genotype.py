@@ -30,7 +30,7 @@ class Genotype:
     alt_counts: dict[tuple[str, str], int]
     linear_coverage: list[tuple[int, int]]
     exclude_terminus: bool
-    num_edges: int  # total number of edges in graph
+    num_edges: int  # Size of the assigned biedge index space, including holes.
     missing_variants: set[tuple[str, str]] | None = None
 
     @classmethod
@@ -47,7 +47,7 @@ class Genotype:
         end = [graph.termini[1] + '_+' if graph.direction(walk[-1]) == 1 else graph.termini[0] + '_-']
         walk = start + walk + end
 
-        num_edges = graph.number_of_edges() // 2 + 1  # +1 for safety
+        num_edges = graph.biedge_index_capacity
         ref_visited = np.zeros(num_edges, dtype=np.bool_)
         ref_counts_multi = {}  # only for edges visited >= 2 times
         count_alt = {}
@@ -71,7 +71,8 @@ class Genotype:
                 else:
                     ref_visited[edge_idx] = True
             else:
-                count_alt[e] = count_alt.get(e, 0) + 1
+                representative = graph.representative_edge(e)
+                count_alt[representative] = count_alt.get(representative, 0) + 1
 
         return cls(ref_visited, ref_counts_multi, count_alt, [(min_pos, max_pos)], exclude_terminus, num_edges)
 
@@ -212,6 +213,7 @@ class Genotype:
                 errors.append(f"Walk contains edge {e} which is not in the graph")
                 continue
                 
+            e = graph.representative_edge(e)
             if graph.edges[e]['is_in_tree']:
                 expected_ref[e] = expected_ref.get(e, 0) + 1
             else:
@@ -274,6 +276,7 @@ class Genotype:
                     errors.append(f"Walk contains edge {e} which is not in the graph")
                     continue
                     
+                e = graph.representative_edge(e)
                 if graph.edges[e]['is_in_tree']:
                     expected_ref[e] = expected_ref.get(e, 0) + 1
                 else:

@@ -29,7 +29,8 @@ class PangenomeGraph(nx.DiGraph):
     reference_path: list[str]
     variant_edges: set
     haplo_priorities: dict[str, int]
-    number_of_biedges: int  # Needed because nx.number_of_edges() runs in O(number of edges)
+    number_of_biedges: int
+    biedge_index_capacity: int  # Next unused index; retained holes remain addressable by genotypes.
     logger: logging.Logger
     walks: dict[str, list[str]]
 
@@ -180,7 +181,7 @@ class PangenomeGraph(nx.DiGraph):
         logger.info("Loading L lines (edges)")
         for line in read_gfa_line_by_line(gfa_file, line_types=['L']):
             G.add_biedge(line.u, line.v)
-        logger.info(f"Loaded {len(G.edges) // 2} biedges")
+        logger.info(f"Loaded {G.number_of_biedges} biedges")
 
         if return_walks:
             G.walks = {}
@@ -214,7 +215,7 @@ class PangenomeGraph(nx.DiGraph):
             if walk_count % 50 == 0:
                 logger.info(f"Processed {walk_count} walks")
 
-        logger.info(f"Loaded {len(G.nodes) / 2:.0f} binodes, {len(G.edges) / 2:.0f} biedges")
+        logger.info(f"Loaded {len(G.nodes) / 2:.0f} binodes, {G.number_of_biedges} biedges")
 
         assign_node_directions(G, G.reference_path)
 
@@ -255,9 +256,11 @@ class PangenomeGraph(nx.DiGraph):
         self.variant_edges = variant_edges if variant_edges is not None else set()
         self.haplo_priorities = haplo_priorities if haplo_priorities is not None else {}
         self.logger = logger if logger is not None else logging.getLogger('pantree')
-        self.number_of_biedges = np.sum(
-            [count_or_not for _, _, count_or_not in directed_graph.edges(data='is_representative')]
-        )
+        self.number_of_biedges = sum(bool(data.get('is_representative'))
+                                    for _, _, data in self.edges(data=True))
+        # Scan once when wrapping an existing graph, rather than once per haplotype.
+        self.biedge_index_capacity = 1 + max(
+            (int(data['index']) for _, _, data in self.edges(data=True)), default=-1)
         self.walks = walks if walks is not None else {}
 
     def identify_variant_type(self,
@@ -609,13 +612,16 @@ class PangenomeGraph(nx.DiGraph):
 
         edge_data = {key: 0 for key in self.biedge_attribute_names}
         edge_data['weight'] = weight
-        edge_data['index'] = self.number_of_biedges
+        edge_data['index'] = self.biedge_index_capacity
         edge_data['is_representative'] = True
         self.add_edge(node1, node2, **edge_data)
 
-        edge_data['is_representative'] = False
-        self.add_edge(node_complement(node2), node_complement(node1), **edge_data)
+        complement = edge_complement((node1, node2))
+        if complement != (node1, node2):
+            edge_data['is_representative'] = False
+            self.add_edge(*complement, **edge_data)
         self.number_of_biedges += 1
+        self.biedge_index_capacity += 1
 
     def representative_edge(self, edge: tuple):
         """
@@ -672,7 +678,9 @@ class PangenomeGraph(nx.DiGraph):
         for walk in walks:
             for u, v in zip(walk[:-1], walk[1:]):
                 self.edges[u, v]['weight'] += 1
-                self.edges[node_complement(v), node_complement(u)]['weight'] += 1
+                complement = edge_complement((u, v))
+                if complement != (u, v):
+                    self.edges[complement]['weight'] += 1
 
     def annotate_branch_points(self) -> None:
         """
@@ -1246,19 +1254,27 @@ class PangenomeGraph(nx.DiGraph):
         with which it was combined
         """
 
-        def combine_nodes(parent: str, child: str) -> None:
+        def combine_nodes(parent: str, child: str) -> bool:
             neighbors = sorted(simplified_graph.successors(child))
+            child_complement = node_complement(child)
+            parent_complement = node_complement(parent)
+            # A hairpin cannot be contracted as a pair of independent directed paths.
+            # Keep it intact if either retained/rewired endpoint would be deleted.
+            removed = {child, child_complement}
+            if parent in removed or any(neighbor in removed for neighbor in neighbors):
+                return False
+            outgoing = [(neighbor, dict(simplified_graph.edges[child, neighbor]),
+                         dict(simplified_graph.edges[edge_complement((child, neighbor))]))
+                        for neighbor in neighbors]
             sequence = simplified_graph.nodes[child]['sequence']
             child_original_ids = list(simplified_graph.nodes[child].get('original_ids', []))
-            child_complement = node_complement(child)
             complement_sequence = simplified_graph.nodes[child_complement]['sequence']
             child_complement_original_ids = list(simplified_graph.nodes[child_complement].get('original_ids', []))
-            parent_complement = node_complement(parent)
             simplified_graph.remove_node(child)
             simplified_graph.remove_node(child_complement)
-            for neighbor in neighbors:
-                simplified_graph.add_edge(parent, neighbor)
-                simplified_graph.add_edge(*edge_complement((parent, neighbor)))
+            for neighbor, data, complement_data in outgoing:
+                simplified_graph.add_edge(parent, neighbor, **data)
+                simplified_graph.add_edge(*edge_complement((parent, neighbor)), **complement_data)
             simplified_graph.nodes[parent]['sequence'] += sequence
             parent_original_ids = list(simplified_graph.nodes[parent].get('original_ids', []))
             simplified_graph.nodes[parent]['original_ids'] = parent_original_ids + child_original_ids
@@ -1267,6 +1283,7 @@ class PangenomeGraph(nx.DiGraph):
             parent_complement_original_ids = list(simplified_graph.nodes[parent_complement].get('original_ids', []))
             simplified_graph.nodes[parent_complement]['original_ids'] = child_complement_original_ids + \
                 parent_complement_original_ids
+            return True
 
 
         node_in_degrees = {node: degree for node, degree in simplified_graph.in_degree()}
@@ -1290,9 +1307,13 @@ class PangenomeGraph(nx.DiGraph):
                     continue
                 parent = start
                 combined_nodes = []
-                while node_in_degrees[node] == 1 and node_out_degrees[node] == 1:
+                visited = set()
+                while (node in simplified_graph and node not in end_points and node not in visited
+                       and node_in_degrees[node] == 1 and node_out_degrees[node] == 1):
+                    visited.add(node)
                     if node_out_degrees[parent] == 1:
-                        combine_nodes(parent, node) # TODO replace with combine_path
+                        if not combine_nodes(parent, node):
+                            break
                         combined_nodes.append(node)
                         node = next(simplified_graph.successors(parent))
                     else:

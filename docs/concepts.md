@@ -4,6 +4,8 @@
 
 Pantree represents each GFA segment in both orientations. Segment `12` becomes `12_+` and `12_-`; reversing an edge reverses its direction and complements both endpoints. Graph transformations must maintain this symmetry.
 
+A self-complementary link such as `12_+ -> 12_-` has one directed representation. An ordinary loop such as `12_+ -> 12_+` has a distinct complementary loop, `12_- -> 12_-`. Each link has one representative and one shared index; each walk traversal contributes one visit to that link, including when a walk visits both complementary orientations.
+
 Artificial terminal nodes connect walk ends so tree construction can operate over a common graph. They are implementation helpers rather than biological segments.
 
 ## Reference tree and variants
@@ -27,3 +29,5 @@ Graph-to-VCF conversion can emit nested variants. Consolidation selects one samp
 ## Simplification and provenance
 
 Simplification removes variation below a requested combined allele length, trims optional reference-coordinate bounds, and contracts compatible paths. Output segment IDs are new, so output records the source GFA in `og:Z` and represented input segment IDs in `oi:J`.
+
+Links traversed by the reference walk remain protected at every length threshold. A hairpin at a segment boundary has no intervening allele sequence, so a positive threshold can remove it when it is off the reference walk. Retained hairpins and loops remain explicit wherever contraction would delete an endpoint needed to preserve their topology.
