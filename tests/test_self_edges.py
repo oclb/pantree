@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+from unittest.mock import patch
 
 import networkx as nx
 import pytest
@@ -85,6 +86,57 @@ def test_sparse_indices_reinitialize_capacity_and_allocate_unique_index():
     assert wrapped.edges['1_+', '1_-']['index'] == 8
     assert wrapped.biedge_index_capacity == 9
     assert len({data['index'] for *_, data in wrapped.sorted_biedge_representatives}) == 8
+
+
+@pytest.mark.parametrize('operation', ['copy', 'view', 'subgraph', 'edge_subgraph'])
+@pytest.mark.parametrize('sparse', [False, True])
+def test_networkx_copies_and_views_preserve_genotype_index_capacity(operation, sparse):
+    graph = PangenomeGraph.from_gfa(str(DATA / 'no_variants.gfa'), ref_name='ref')
+    if sparse:
+        for _, _, data in graph.edges(data=True):
+            data['index'] = 100 + 7 * data['index']
+        graph = PangenomeGraph(nx.DiGraph(graph))
+    walk = ['1_+', '2_+', '3_+']
+    expected = graph.genotype(walk)
+    if operation == 'copy':
+        copied = graph.copy()
+    elif operation == 'view':
+        copied = graph.copy(as_view=True)
+    elif operation == 'subgraph':
+        copied = graph.subgraph(list(graph))
+    else:
+        copied = graph.edge_subgraph(list(graph.edges))
+    assert copied.biedge_index_capacity == graph.biedge_index_capacity
+    # Repeated haplotypes must not rescan the graph's edge indices.
+    with patch.object(type(copied.edges), '__call__', side_effect=AssertionError('edge scan')):
+        for _ in range(3):
+            genotype = copied.genotype(walk)
+            assert genotype.num_edges == expected.num_edges
+            assert genotype.ref_visited.tolist() == expected.ref_visited.tolist()
+            assert genotype.ref_counts_multi == expected.ref_counts_multi
+            assert genotype.alt_counts == expected.alt_counts
+
+
+def test_index_capacity_tracks_source_growth_in_views_but_not_independent_copies():
+    graph = PangenomeGraph.from_gfa(str(DATA / 'no_variants.gfa'), ref_name='ref')
+    view = graph.copy(as_view=True)
+    copied = graph.copy()
+    original_capacity = graph.biedge_index_capacity
+    graph.add_biedge('1_+', '3_+')
+    assert view.biedge_index_capacity == graph.biedge_index_capacity == original_capacity + 1
+    assert copied.biedge_index_capacity == original_capacity
+    copied.add_biedge('1_+', '3_+')
+    assert copied.edges['1_+', '3_+']['index'] == original_capacity
+    assert copied.biedge_index_capacity == original_capacity + 1
+
+
+def test_index_capacity_recovers_after_clearing_graph_metadata():
+    graph = PangenomeGraph.from_gfa(str(DATA / 'no_variants.gfa'), ref_name='ref')
+    expected = graph.genotype(['1_+', '2_+', '3_+'])
+    graph.graph.clear()
+    assert graph.biedge_index_capacity == expected.num_edges
+    with patch.object(type(graph.edges), '__call__', side_effect=AssertionError('edge scan')):
+        assert graph.genotype(['1_+', '2_+', '3_+']).ref_visited.tolist() == expected.ref_visited.tolist()
 
 
 @pytest.mark.parametrize('reverse_loop', [False, True])

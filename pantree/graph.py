@@ -30,7 +30,6 @@ class PangenomeGraph(nx.DiGraph):
     variant_edges: set
     haplo_priorities: dict[str, int]
     number_of_biedges: int
-    biedge_index_capacity: int  # Next unused index; retained holes remain addressable by genotypes.
     logger: logging.Logger
     walks: dict[str, list[str]]
 
@@ -88,6 +87,20 @@ class PangenomeGraph(nx.DiGraph):
     @property
     def number_of_binodes(self) -> int:
         return self.number_of_nodes() // 2
+
+    @property
+    def biedge_index_capacity(self) -> int:
+        """Next unused index, copied with graph metadata and shared by live views."""
+        key = '_pantree_biedge_index_capacity'
+        if key not in self.graph:
+            # Recover once if a caller clears graph-level metadata.
+            self.graph[key] = 1 + max(
+                (int(data['index']) for _, _, data in self.edges(data=True)), default=-1)
+        return self.graph[key]
+
+    @biedge_index_capacity.setter
+    def biedge_index_capacity(self, value: int) -> None:
+        self.graph['_pantree_biedge_index_capacity'] = value
 
     def on_reference_path(self, node_or_edge):
         if type(node_or_edge) is tuple:
