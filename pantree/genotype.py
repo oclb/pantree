@@ -115,7 +115,7 @@ class Genotype:
         # order walks and variants by position
         source_positions = np.sort([x[1] for x in self.linear_coverage] + [graph.position('+_terminus_+')])
         sink_positions = np.sort([x[0] for x in self.linear_coverage] + [graph.right_position('-_terminus_+')])
-        sorted_variant_edges = graph.sorted_variant_edges(exclude_terminus=self.exclude_terminus)
+        sorted_variant_edges = graph.sorted_variant_edges_by_endpoint(exclude_terminus=self.exclude_terminus)
         sorted_variant_positions = [min(*graph.position(e)) for e in sorted_variant_edges]
 
         result = []

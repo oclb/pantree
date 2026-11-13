@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from pantree.graph import PangenomeGraph
+from pantree.gfa import read_gfa_line_by_line
 
 
 DATA = Path(__file__).parent / 'data'
@@ -147,3 +148,42 @@ def test_revisit_vcf_alleles_and_suffix_missingness(fixture, length, variant_id,
         assert unmasked_rows[key][:-1] == row[:-1]
         assert unmasked_rows[key][-1] == ('0:0:0' if key in [variant_id, '>5>3']
                                          else row[-1])
+
+
+@pytest.mark.parametrize('exclude_terminus', [True, False])
+def test_branched_cyclic_missingness_matches_coverage_gap_scan(exclude_terminus,
+                                                            tmp_path):
+    path = DATA / 'cyclic_missingness.gfa'
+    with pytest.warns(UserWarning, match='Reference walk is cyclic'):
+        graph = PangenomeGraph.from_gfa(str(path), ref_name='REF')
+    # Branch-point order need not sort the endpoints used for missingness.
+    endpoint_positions = [min(graph.position(edge))
+                          for edge in graph.sorted_variant_edges()]
+    assert endpoint_positions != sorted(endpoint_positions)
+
+    for line in read_gfa_line_by_line(str(path), line_types=['W']):
+        genotype = graph.genotype(line.walk, exclude_terminus=exclude_terminus)
+        genotype.compute_missing_variants(graph)
+        gap_starts = sorted([end for _, end in genotype.linear_coverage]
+                            + [graph.position('+_terminus_+')])
+        gap_ends = sorted([start for start, _ in genotype.linear_coverage]
+                          + [graph.right_position('-_terminus_+')])
+        gaps = list(zip(gap_starts, gap_ends))
+        expected = {
+            edge for edge in graph.variant_edges
+            if (not exclude_terminus or not graph.is_terminal(edge))
+            and any(start < min(graph.position(edge)) < end
+                    and max(graph.right_position(edge)) <= end
+                    for start, end in gaps)
+        }
+        assert genotype.missing_variants == expected
+        if line.sample_name == 'PARTIAL':
+            assert ('4_+', '5_+') in genotype.missing_variants
+
+    output = tmp_path / 'partial.vcf'
+    graph.write_vcf(str(path), str(output), chr_name='chr1',
+                    exclude_terminus=exclude_terminus)
+    rows = [line.split('\t') for line in output.read_text().splitlines()]
+    header = next(row for row in rows if row[0] == '#CHROM')
+    uncovered = next(row for row in rows if len(row) > 2 and row[2] == '>4>5')
+    assert uncovered[header.index('PARTIAL')] == '.:0:0'

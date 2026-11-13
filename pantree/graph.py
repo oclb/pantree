@@ -66,6 +66,12 @@ class PangenomeGraph(nx.DiGraph):
         sorted_vars = sorted(sorted_vars, key=lambda x: self.position(self.edges[x]['branch_point']))
         return sorted_vars
 
+    @lru_cache(maxsize=2)
+    def sorted_variant_edges_by_endpoint(self, exclude_terminus=True) -> list[tuple[str, str]]:
+        """Order missingness candidates by the minimum endpoint position being searched."""
+        return sorted(self.sorted_variant_edges(exclude_terminus=exclude_terminus),
+                      key=lambda edge: min(self.position(edge)))
+
     @property
     def biedge_attribute_names(self) -> tuple:
         return 'index', 'weight', 'is_in_tree', 'branch_point', 'is_back_edge'

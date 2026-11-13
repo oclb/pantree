@@ -1,0 +1,21 @@
+S	1	A
+S	2	C
+S	3	G
+S	4	T
+S	5	A
+S	6	C
+S	7	G
+L	1	+	2	+	0M
+L	2	+	3	+	0M
+L	3	+	2	+	0M
+L	2	+	4	+	0M
+L	4	+	5	+	0M
+L	3	+	6	+	0M
+L	6	+	5	+	0M
+L	3	+	7	+	0M
+L	7	+	5	+	0M
+L	3	+	5	+	0M
+W	REF	0	chr1	0	6	>1>2>3>2>4>5
+W	PARTIAL	0	chr1	0	3	>1>2>3
+W	B1	0	chr1	0	3	>3>6>5
+W	B2	0	chr1	0	3	>3>7>5
