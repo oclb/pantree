@@ -435,6 +435,7 @@ class PangenomeGraph(nx.DiGraph):
         # reference tree contains positive-direction nodes only, and no inversion edges
         # self.add_biedge(self.reference_path[0], self.reference_path[1])
         positive_subgraph = self.subgraph([n for n, direction in self.nodes(data="direction") if direction == 1])
+        self.connect_unreachable_nodes(positive_subgraph)
         self.reference_tree = dfs_method(positive_subgraph, reference_path=self.reference_path, **kwargs)
 
         for edge in positive_subgraph.edges():
@@ -445,6 +446,36 @@ class PangenomeGraph(nx.DiGraph):
         # Variant edges are those not in the tree
         self.variant_edges = {(u, v) for u, v, data in self.edges(data=True)
                               if data['is_representative'] and not data['is_in_tree']}
+
+    def connect_unreachable_nodes(self, positive_subgraph: nx.DiGraph) -> None:
+        """
+        Adds a biedge from the + terminus to each positive node that it cannot reach, preferring reference nodes in
+        walk order, so that the reference tree spans the positive subgraph. Parts of the graph can be entered solely
+        through inversion edges or self edges, even when the reference walk is acyclic.
+        """
+        root = self.reference_path[0]
+        reachable = {root}
+
+        def extend_reachable(start):
+            stack = [start]
+            while stack:
+                for successor in positive_subgraph.successors(stack.pop()):
+                    if successor not in reachable:
+                        reachable.add(successor)
+                        stack.append(successor)
+
+        extend_reachable(root)
+        connected = []
+        for nodes in (self.reference_path, list(positive_subgraph.nodes)):
+            for node in nodes:
+                if node not in reachable and node in positive_subgraph:
+                    self.add_biedge(root, node)
+                    reachable.add(node)
+                    extend_reachable(node)
+                    connected.append(node)
+        if connected:
+            warnings.warn(f'{len(connected)} nodes were unreachable from {root} and were connected to it '
+                          f'(e.g. {", ".join(connected[:5])})')
 
     def get_reference_edges(self) -> dict[tuple[str, str], tuple[str, str]]:
         """Returns a dictionary mapping variant edges to their references edges."""
@@ -1151,8 +1182,15 @@ class PangenomeGraph(nx.DiGraph):
             variant_edge_set = [variant for variant in self.variant_edges
                                  if min(self.position(variant)) >= pos_range[0] and max(self.position(variant)) <= pos_range[1]]
 
+        # Variant edges only lie on the reference walk when it is cyclic; keep them so the walk stays connected
+        reference_walk_edges = {self.representative_edge(edge)
+                                for edge in zip(self.reference_path[:-1], self.reference_path[1:])
+                                if self.has_edge(*edge)}
+
         small_variant_edges = []
         for variant_edge in variant_edge_set:
+            if variant_edge in reference_walk_edges:
+                continue
             ref, alt, _, _ = self.ref_alt_alleles(variant_edge)
             if len(ref) + len(alt) < minimum_allele_length:
                 small_variant_edges.append(variant_edge)
@@ -1228,7 +1266,12 @@ class PangenomeGraph(nx.DiGraph):
 
         node_mapping: dict[str, str] = {}
         for start in starting_points:
+            if start not in simplified_graph:
+                continue
             for node in list(simplified_graph.successors(start)):
+                # Combining a node also removes its complement, which may still be listed here
+                if node not in simplified_graph:
+                    continue
                 parent = start
                 combined_nodes = []
                 while node_in_degrees[node] == 1 and node_out_degrees[node] == 1:

@@ -1,3 +1,5 @@
+import itertools
+import warnings
 import networkx as nx
 from .utils import node_complement
 import operator
@@ -18,6 +20,8 @@ def max_weight_dfs_tree(G: nx.DiGraph,
     dfs_tree = nx.DiGraph()
     visited = set()
     stack = []
+    reference_successors, revisit_steps = _reference_successors(G, reference_path)
+
     def visit_node(parent, current_node):
         # visit current_node
         visited.add(current_node)
@@ -32,20 +36,83 @@ def max_weight_dfs_tree(G: nx.DiGraph,
         for _, neighbor, _ in neighbors:
             if neighbor not in visited:
                 stack.append((current_node, neighbor))
+        # Reference successors go on top, so the search follows the reference walk wherever it can
+        for neighbor in reversed(reference_successors.get(current_node, ())):
+            if neighbor not in visited:
+                stack.append((current_node, neighbor))
 
-    for i in range(len(reference_path)):
-        if i == 0:
-            reference_edge = (None, reference_path[0])
-        else:
-            reference_edge = (reference_path[i - 1], reference_path[i])
-        visit_node(*reference_edge)
-
+    visit_node(None, reference_path[0])
     while stack:
         parent, current_node = stack.pop()
         if current_node not in visited:
             visit_node(parent, current_node)
 
+    if revisit_steps:
+        _warn_cyclic_reference(G, reference_path, revisit_steps, dfs_tree)
+
     return dfs_tree
+
+def _reference_successors(G: nx.DiGraph, reference_path: list) -> tuple[dict, list]:
+    """
+    Maps each reference node in G to the nodes that follow it on the reference walk, in walk order. A cyclic walk
+    revisits a node or its complement; after such steps the walk resumes at its next new node, which is therefore
+    also a successor when G has that edge. Returns the map and the indices of revisiting steps.
+    """
+    seen = set()
+    revisit_steps = []
+    for i, node in enumerate(reference_path):
+        oriented = node[-2:] in ('_+', '_-')
+        if node in seen or (oriented and node_complement(node) in seen):
+            revisit_steps.append(i)
+        seen.add(node)
+
+    revisits = set(revisit_steps)
+    next_new_node = [None] * len(reference_path)
+    upcoming = None
+    for i in range(len(reference_path) - 1, -1, -1):
+        next_new_node[i] = upcoming
+        if i not in revisits:
+            upcoming = reference_path[i]
+
+    successors = {}
+    for i, node in enumerate(reference_path[:-1]):
+        if node not in G:
+            continue
+        for candidate in (reference_path[i + 1], next_new_node[i]):
+            if candidate is not None and G.has_edge(node, candidate):
+                targets = successors.setdefault(node, [])
+                if candidate not in targets:
+                    targets.append(candidate)
+    return successors, revisit_steps
+
+def _warn_cyclic_reference(G: nx.DiGraph, reference_path: list, revisit_steps: list, dfs_tree: nx.DiGraph,
+                           merge_distance: int = 100) -> None:
+    def length(node):
+        if node not in G and node[-2:] in ('_+', '_-'):
+            node = node_complement(node)
+        return len(G.nodes[node].get('sequence', '')) if node in G else 0
+
+    ends = list(itertools.accumulate(length(u) for u in reference_path))
+    regions = []
+    for i in revisit_steps:
+        if regions and i - regions[-1][1] <= merge_distance:
+            regions[-1][1] = i
+        else:
+            regions.append([i, i])
+    spans = ', '.join(f'{ends[a] - length(reference_path[a]) + 1}-{ends[b]}' for a, b in regions[:10])
+    if len(regions) > 10:
+        spans += ', ...'
+
+    revisits = set(revisit_steps)
+    departures = sum(1 for i in range(1, len(reference_path)) if i not in revisits
+                     and reference_path[i - 1] not in dfs_tree.pred.get(reference_path[i], ()))
+    num_inverted = sum(reference_path[i] not in G for i in revisit_steps)
+    warnings.warn(
+        f'Reference walk is cyclic: {len(revisit_steps)} steps revisit a node or its complement '
+        f'({num_inverted} in the opposite orientation). The edges they use are treated as variant edges, and the '
+        f'reference tree departs from the reference walk at {departures} nodes. Affected regions '
+        f'({len(regions)}; bp along the reference walk, 1-based): {spans}'
+    )
 
 def assign_node_directions(G: nx.DiGraph,
                         reference_path: list) -> None:

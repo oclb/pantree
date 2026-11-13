@@ -1,0 +1,12 @@
+H	VN:Z:1.1
+S	1	GAGG
+S	2	A
+S	3	GCCGTA
+S	4	CTAGC
+L	1	+	2	+	0M
+L	2	+	3	+	0M
+L	4	-	2	+	0M
+L	4	+	4	-	0M
+L	4	+	4	+	0M
+W	REF	0	chr1	0	0	>1>2>3
+W	ALT	0	chr1	0	0	>4>4<4>2
