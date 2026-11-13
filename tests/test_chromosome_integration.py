@@ -1,9 +1,11 @@
 """Combined PR24 / cyclic-reference and self-link integration contracts."""
+from copy import deepcopy
 import os
 from pathlib import Path
 import re
 import subprocess
 import sys
+from unittest.mock import patch
 
 import networkx as nx
 import pytest
@@ -17,6 +19,103 @@ from pantree.graph import PangenomeGraph
 from pantree.utils import edge_complement, node_complement
 
 DATA = Path(__file__).parent / 'data'
+
+
+@pytest.mark.parametrize('method', list(dfs_methods))
+@pytest.mark.parametrize('clear_metadata', [False, True])
+@pytest.mark.parametrize('operation', ['copy', 'live', 'nodes', 'edges', 'filtered_copy', 'deepcopy', 'import'])
+def test_multichromosome_copy_view_terminal_metadata(method, clear_metadata, operation):
+    graph = PangenomeGraph.from_gfa(str(DATA / 'multi_chrom.gfa'), ref_name='ref',
+                                    dfs_method=dfs_methods[method])
+    walk = ['14_-', '12_-', '11_-']
+    expected = graph.genotype(walk)
+    expected_termini = dict(graph.chromosome_termini)
+    kept_edges = [edge for edge in graph.edges if edge != ('11_+', '12_+')]
+    if clear_metadata:
+        graph.graph.clear()
+    if operation == 'copy':
+        copied = graph.copy()
+    elif operation == 'live':
+        copied = graph.copy(as_view=True)
+    elif operation == 'nodes':
+        copied = graph.subgraph(list(graph))
+    elif operation == 'edges':
+        copied = graph.edge_subgraph(kept_edges)
+    elif operation == 'filtered_copy':
+        copied = graph.edge_subgraph(kept_edges).copy()
+    elif operation == 'deepcopy':
+        copied = deepcopy(graph)
+    else:
+        copied = PangenomeGraph(nx.DiGraph(graph))
+    assert copied.chromosome_termini == expected_termini
+    assert copied.terminal_walk(walk) == ['-_terminus_1_-', *walk, '+_terminus_1_-']
+    assert all(copied.is_terminal(name + sign) for pair in expected_termini.values()
+               for name in pair for sign in ('_+', '_-'))
+    assert copied.biedge_index_capacity == expected.num_edges
+    with patch.object(type(copied.edges), '__call__', side_effect=AssertionError('edge scan')):
+        for _ in range(3):
+            genotype = copied.genotype(walk)
+            assert genotype.ref_visited.tolist() == expected.ref_visited.tolist()
+            assert genotype.alt_counts == expected.alt_counts
+            assert genotype.coverage_by_chrom == expected.coverage_by_chrom
+            assert Genotype.verify_genotype_matches_walk(copied, walk, genotype) == (True, [])
+            assert Genotype.verify_genotype_matches_walks(copied, [walk], genotype) == (True, [])
+    bad = deepcopy(genotype)
+    index = copied.edges['14_-', '12_-']['index']
+    bad.ref_visited[index] = False
+    assert Genotype.verify_genotype_matches_walk(copied, walk, bad)[0] is False
+    assert Genotype.verify_genotype_matches_walks(copied, [walk], bad)[0] is False
+
+
+@pytest.mark.parametrize('method', list(dfs_methods))
+@pytest.mark.parametrize('multiple_chromosomes', [False, True])
+def test_ignored_reference_haplotype_fragments_are_genotyped(tmp_path, method, multiple_chromosomes):
+    text = ('S\t1\tA\nS\t2\tC\nS\t3\tG\nS\t4\tT\n'
+            'L\t1\t+\t2\t+\t0M\nL\t2\t+\t4\t+\t0M\n'
+            'L\t1\t+\t3\t+\t0M\nL\t3\t+\t4\t+\t0M\n'
+            'W\tref\t0\tchr1\t0\t3\t>1>2>4\n')
+    if multiple_chromosomes:
+        text += 'S\t5\tA\nW\tref\t0\tchr2\t0\t1\t>5\n'
+    text += ('W\tref\t1\tassembly\t0\t1\t>1\n'
+             'W\tref\t1\tassembly\t1\t3\t>3>4\n')
+    path = tmp_path / 'fragments.gfa'
+    path.write_text(text)
+    with pytest.warns(UserWarning, match='Multiple reference haplotypes'):
+        graph = PangenomeGraph.from_gfa(str(path), ref_name='ref', dfs_method=dfs_methods[method])
+    assert set(graph.reference_paths) == ({'chr1', 'chr2'} if multiple_chromosomes else {'chr1'})
+    rows = records(graph, path, tmp_path / 'fragments.vcf')
+    row = rows['chr1', '>3>4']
+    assert row[3:5] == ['C', 'G']
+    assert row[8:] == ['GT:CR:CA', '0|1:1,0:0,1']
+    path.write_text(text + 'W\tref\t0\tchr1\t3\t4\t>4\n')
+    with pytest.raises(ValueError, match='Multiple reference walks'):
+        PangenomeGraph.from_gfa(str(path), ref_name='ref', dfs_method=dfs_methods[method])
+
+
+@pytest.mark.parametrize('method', list(dfs_methods))
+@pytest.mark.parametrize('independent_copy', [False, True])
+def test_cleared_metadata_on_a_filtered_cross_chromosome_walk(tmp_path, method, independent_copy):
+    path = tmp_path / 'cross.gfa'
+    path.write_text((DATA / 'multi_chrom.gfa').read_text() + 'L\t2\t+\t12\t+\t0M\n')
+    graph = PangenomeGraph.from_gfa(str(path), ref_name='ref', dfs_method=dfs_methods[method])
+    walk = ['1_+', '2_+', '12_+', '14_+']
+    expected = graph.genotype(walk)
+    terminal_walk = graph.terminal_walk(walk)
+    edges = list(zip(terminal_walk, terminal_walk[1:]))
+    graph.graph.clear()
+    copied = graph.edge_subgraph(edges)
+    if independent_copy:
+        copied = copied.copy()
+    # Only chr1's start and chr2's end are present; the other terminal nodes are hidden.
+    assert copied.terminal_walk(walk) == terminal_walk
+    genotype = copied.genotype(walk)
+    assert genotype.alt_counts == expected.alt_counts
+    assert genotype.coverage_by_chrom == expected.coverage_by_chrom
+    for edge in edges:
+        index = copied.edges[edge]['index']
+        assert genotype.get_ref_count(index) == expected.get_ref_count(index)
+    assert Genotype.verify_genotype_matches_walk(copied, walk, genotype) == (True, [])
+    assert Genotype.verify_genotype_matches_walks(copied, [walk], genotype) == (True, [])
 
 
 def renamed(fixture, chrom, offset=0):

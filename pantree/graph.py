@@ -106,6 +106,46 @@ class PangenomeGraph(nx.DiGraph):
     def biedge_index_capacity(self, value: int) -> None:
         self.graph['_pantree_biedge_index_capacity'] = value
 
+    def _recover_terminal_metadata(self) -> None:
+        """Restore terminal identity from the owning graph's marked nodes."""
+        owner = self
+        while hasattr(owner, '_graph'):
+            owner = owner._graph
+        pairs = {}
+        terminals = set()
+        for node, data in owner.nodes(data=True):
+            pair = data.get('_pantree_terminal_pair')
+            if pair is None:
+                continue
+            terminals.update(pair)
+            chrom = data.get('chromosome')
+            if chrom is not None:
+                pairs[chrom] = pair
+        recovered = dict(sorted(pairs.items()))
+        mapping = self.graph.setdefault('_pantree_chromosome_termini', recovered)
+        terminals.update(name for pair in mapping.values() for name in pair)
+        self.graph.setdefault('_pantree_terminal_binodes', terminals or set(self.termini))
+
+    @property
+    def chromosome_termini(self) -> dict[str, tuple[str, str]]:
+        if '_pantree_chromosome_termini' not in self.graph:
+            self._recover_terminal_metadata()
+        return self.graph['_pantree_chromosome_termini']
+
+    @chromosome_termini.setter
+    def chromosome_termini(self, value: dict[str, tuple[str, str]]) -> None:
+        self.graph['_pantree_chromosome_termini'] = dict(value)
+
+    @property
+    def terminal_binodes(self) -> set[str]:
+        if '_pantree_terminal_binodes' not in self.graph:
+            self._recover_terminal_metadata()
+        return self.graph['_pantree_terminal_binodes']
+
+    @terminal_binodes.setter
+    def terminal_binodes(self, value: set[str]) -> None:
+        self.graph['_pantree_terminal_binodes'] = set(value)
+
     def on_reference_path(self, node_or_edge):
         if type(node_or_edge) is tuple:
             if not self.has_edge(*node_or_edge):
@@ -230,11 +270,6 @@ class PangenomeGraph(nx.DiGraph):
                 if not line.walk:
                     raise ValueError(f"Empty reference walk for {chrom!r}")
                 haplotype = '#'.join(line.hap_name.split('#')[:2])
-                identity = (chrom, haplotype)
-                if identity in seen_reference_walks:
-                    raise ValueError(f"Multiple reference walks for {chrom!r} and haplotype "
-                                     f"{haplotype!r}; select one intact walk per chromosome/haplotype")
-                seen_reference_walks.add(identity)
                 if selected_reference_haplotype is None:
                     selected_reference_haplotype = haplotype
                 if haplotype != selected_reference_haplotype:
@@ -242,6 +277,11 @@ class PangenomeGraph(nx.DiGraph):
                                   f"{selected_reference_haplotype!r}, ignoring walk {line.hap_name!r} "
                                   "for tree selection")
                 else:
+                    identity = (chrom, haplotype)
+                    if identity in seen_reference_walks:
+                        raise ValueError(f"Multiple reference walks for {chrom!r} and haplotype "
+                                         f"{haplotype!r}; select one intact walk per chromosome/haplotype")
+                    seen_reference_walks.add(identity)
                     G.reference_paths[chrom] = line.walk
                     G.reference_starts[chrom] = line.contig_start
                     if not G.reference_path:
@@ -321,8 +361,6 @@ class PangenomeGraph(nx.DiGraph):
         self.reference_path = reference_path if reference_path is not None else []
         self.reference_paths: dict[str, list[str]] = {}
         self.reference_starts: dict[str, int] = {}
-        self.chromosome_termini: dict[str, tuple[str, str]] = {}
-        self.terminal_binodes = set(self.termini)
         self.variant_edges = variant_edges if variant_edges is not None else set()
         self.haplo_priorities = haplo_priorities if haplo_priorities is not None else {}
         self.logger = logger if logger is not None else logging.getLogger('pantree')
@@ -664,11 +702,15 @@ class PangenomeGraph(nx.DiGraph):
         """
         Adds a binode to the bidirected graph, comprising a node and its complement.
         """
-        original_ids = [] if str(binode) in self.terminal_binodes else [str(binode)]
+        terminal = str(binode) in self.terminal_binodes
+        original_ids = [] if terminal else [str(binode)]
         node_data = {key: 0 for key in self.node_attribute_names}
         node_data['sequence'] = seq
         node_data['direction'] = 1
         node_data['original_ids'] = list(original_ids)
+        if terminal:
+            # Either terminal can recover the pair after an orientation/path filter.
+            node_data['_pantree_terminal_pair'] = ('+' + str(binode)[1:], '-' + str(binode)[1:])
 
         self.add_node(str(binode) + '_+', **node_data)
 

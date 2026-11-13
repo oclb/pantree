@@ -27,9 +27,9 @@ Pantree selects the first matching reference haplotype in input order and uses
 all its chromosome walks. Additional reference haplotypes produce a warning and
 remain available for genotyping; their assembly-contig names do not create extra
 reference chromosomes. Supply one intact walk per chromosome in the selected
-haplotype. Duplicate or fragmented reference walks with the same chromosome and
-haplotype are rejected, including in alternate reference haplotypes. Other sample
-haplotypes may have multiple fragments. Reference coordinates include the selected
+haplotype. Duplicate or fragmented walks in the selected reference haplotype are
+rejected. Other haplotypes, including alternate haplotypes of the reference sample,
+may have multiple fragments, which are aggregated during genotyping. Reference coordinates include the selected
 `W` start offset; `P` coordinates start at zero.
 Whole-genome conversion keeps the complete graph in memory, so separate runs
 remain an option when memory is limited.
