@@ -1,5 +1,6 @@
 from __future__ import annotations
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from bisect import bisect_left
 from math import inf
 import logging
 import sys
@@ -32,6 +33,7 @@ class Genotype:
     exclude_terminus: bool
     num_edges: int  # Size of the assigned biedge index space, including holes.
     missing_variants: set[tuple[str, str]] | None = None
+    coverage_by_chrom: dict[str, list[tuple[int, int]]] = field(default_factory=dict)
 
     @classmethod
     def genotype(cls, graph: "PangenomeGraph", walk: list[str], exclude_terminus: bool) -> "Genotype":
@@ -43,9 +45,8 @@ class Genotype:
         """
 
         # Append start and end nodes to walk
-        start = [graph.termini[0] + '_+' if graph.direction(walk[0]) == 1 else graph.termini[1] + '_-']
-        end = [graph.termini[1] + '_+' if graph.direction(walk[-1]) == 1 else graph.termini[0] + '_-']
-        walk = start + walk + end
+        input_walk = walk
+        walk = graph.terminal_walk(walk)
 
         num_edges = graph.biedge_index_capacity
         ref_visited = np.zeros(num_edges, dtype=np.bool_)
@@ -74,7 +75,20 @@ class Genotype:
                 representative = graph.representative_edge(e)
                 count_alt[representative] = count_alt.get(representative, 0) + 1
 
-        return cls(ref_visited, ref_counts_multi, count_alt, [(min_pos, max_pos)], exclude_terminus, num_edges)
+        coverage = {}
+        run_chrom, low, high = None, inf, -inf
+        for node in input_walk:
+            chrom = graph.nodes[node].get('chromosome', 'chr0')
+            if chrom != run_chrom and run_chrom is not None:
+                coverage.setdefault(run_chrom, []).append((low, high))
+                low, high = inf, -inf
+            run_chrom = chrom
+            low = min(low, graph.position(node))
+            high = max(high, graph.right_position(node))
+        if run_chrom is not None:
+            coverage.setdefault(run_chrom, []).append((low, high))
+        return cls(ref_visited, ref_counts_multi, count_alt, [(min_pos, max_pos)],
+                   exclude_terminus, num_edges, coverage_by_chrom=coverage)
 
     def update(self, other: 'Genotype'):
         # For ref_visited bitmap: edges visited in either become multi if visited in both
@@ -93,6 +107,8 @@ class Genotype:
         for key, val in other.alt_counts.items():
             self.alt_counts[key] = self.alt_counts.get(key, 0) + val
         self.linear_coverage += other.linear_coverage
+        for chrom, intervals in other.coverage_by_chrom.items():
+            self.coverage_by_chrom.setdefault(chrom, []).extend(intervals)
 
     def memory_breakdown(self) -> dict[str, int]:
         """Return memory usage in bytes for each component."""
@@ -113,6 +129,10 @@ class Genotype:
         Computes variant edges that are missing from a haplotype.
         :param graph: PangenomeGraph object"""
 
+        if len(graph.chromosome_termini) > 1:
+            self._compute_missing_by_chromosome(graph)
+            return
+
         # order walks and variants by position
         source_positions = np.sort([x[1] for x in self.linear_coverage] + [graph.position('+_terminus_+')])
         sink_positions = np.sort([x[0] for x in self.linear_coverage] + [graph.right_position('-_terminus_+')])
@@ -130,8 +150,37 @@ class Genotype:
 
         self.missing_variants = set(result)
 
-    def get_ref_count(self, edge_idx: int) -> int:
-        """Get ref count for an edge by its index."""
+    def _compute_missing_by_chromosome(self, graph):
+        gaps_by_chrom = {}
+        for chrom, (start, end) in graph.chromosome_termini.items():
+            cursor = graph.position(start + '_+')
+            gaps = []
+            for low, high in sorted(self.coverage_by_chrom.get(chrom, [])):
+                if low > cursor:
+                    gaps.append((cursor, low))
+                cursor = max(cursor, high)
+            last = graph.right_position(end + '_+')
+            if cursor < last:
+                gaps.append((cursor, last))
+            gaps_by_chrom[chrom] = ([left for left, _ in gaps], gaps)
+        self.missing_variants = set()
+        for edge in graph.sorted_variant_edges(exclude_terminus=self.exclude_terminus):
+            u, v = edge
+            chrom = graph.chromosome(u)
+            if graph.is_trans_chromosomal(edge):
+                low = high = graph.position(u)
+            else:
+                low = min(graph.position(edge)) + 1
+                high = max(graph.right_position(edge))
+            starts, gaps = gaps_by_chrom[chrom]
+            index = bisect_left(starts, low) - 1
+            if not self.coverage_by_chrom.get(chrom) or (index >= 0 and high <= gaps[index][1]):
+                self.missing_variants.add(edge)
+
+    def get_ref_count(self, edge_idx: int | list[int]) -> int:
+        """Get the count of one tree edge or a set of source continuations."""
+        if isinstance(edge_idx, list):
+            return sum(self.get_ref_count(index) for index in edge_idx)
         if edge_idx in self.ref_counts_multi:
             return self.ref_counts_multi[edge_idx]
         elif self.ref_visited[edge_idx]:
@@ -139,7 +188,7 @@ class Genotype:
         else:
             return 0
 
-    def variant_record(self, variant_edge: tuple[str, str], reference_edge: tuple[str, str], ref_edge_idx: int) -> tuple[int|None, int, int|None]:
+    def variant_record(self, variant_edge: tuple[str, str], reference_edge: tuple[str, str] | None, ref_edge_idx: int | list[int]) -> tuple[int|None, int, int|None]:
         """
         For variant edge e, returns (GT, CR, CA) where GT is the genotype,
         CR is the reference allele count, and CA is the alternative allele count.
@@ -204,9 +253,7 @@ class Genotype:
         expected_alt = {}
         
         # Add terminal nodes to walk (same logic as in genotype() method)
-        start = [graph.termini[0] + '_+' if graph.direction(walk[0]) == 1 else graph.termini[1] + '_-']
-        end = [graph.termini[1] + '_+' if graph.direction(walk[-1]) == 1 else graph.termini[0] + '_-']
-        full_walk = start + walk + end
+        full_walk = graph.terminal_walk(walk)
         
         for e in zip(full_walk[:-1], full_walk[1:]):
             if not graph.has_edge(*e):
@@ -268,9 +315,7 @@ class Genotype:
         
         for walk in walks:
             # Add terminal nodes to walk
-            start = [graph.termini[0] + '_+' if graph.direction(walk[0]) == 1 else graph.termini[1] + '_-']
-            end = [graph.termini[1] + '_+' if graph.direction(walk[-1]) == 1 else graph.termini[0] + '_-']
-            full_walk = start + walk + end
+            full_walk = graph.terminal_walk(walk)
             
             for e in zip(full_walk[:-1], full_walk[1:]):
                 if not graph.has_edge(*e):

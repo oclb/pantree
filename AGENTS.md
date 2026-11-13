@@ -35,7 +35,9 @@ Run focused tests while developing, then the full suite before handing off a beh
 
 - **Bidirected graph:** each input segment has forward and reverse nodes, represented internally as `<segment>_+` and `<segment>_-`.
 - **Complement:** the reverse-orientation counterpart of a node or edge.
-- **Reference tree:** DFS tree used as the baseline representation of the graph.
+- **Reference tree:** DFS baseline; a forest with one chromosome root for whole-genome graphs.
+- **Chromosome assignment:** unique node ownership inherited through the reference tree; complements share ownership.
+- **TRANS_CHROM:** optional scalar VCF INFO tag for the chromosome of destination `v` when it differs from source `u`.
 - **Variant edge:** an edge outside the reference tree.
 - **Walk:** an input sample haplotype represented as a path through graph nodes.
 - **Priority sample:** a sample whose haplotypes influence contiguous DFS traversal and haplotype-position annotations.

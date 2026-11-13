@@ -40,9 +40,10 @@ class PangenomeGraph(nx.DiGraph):
 
     def is_terminal(self, node_or_edge) -> bool:
         if isinstance(node_or_edge, str):
-            return node_or_edge[:-2] in self.termini
+            return node_or_edge[:-2] in self.terminal_binodes
         elif isinstance(node_or_edge, tuple):
-            return self.is_terminal(self.edges[node_or_edge]['branch_point']) or self.is_terminal(node_or_edge[1])
+            return (self.is_terminal(node_or_edge[0]) or self.is_terminal(node_or_edge[1])
+                    or self.is_terminal(self.edges[node_or_edge]['branch_point']))
         else:
             raise TypeError
 
@@ -118,6 +119,21 @@ class PangenomeGraph(nx.DiGraph):
                 self.logger.error(msg)
                 raise ValueError(msg)
             return self.nodes[node_or_edge]['on_reference_path']
+
+    def chromosome(self, node: str) -> str:
+        return self.nodes[node]['chromosome']
+
+    def termini_for(self, node: str) -> tuple[str, str]:
+        return self.chromosome_termini.get(self.nodes[node].get('chromosome'), self.termini)
+
+    def terminal_walk(self, walk: list[str]) -> list[str]:
+        start_terms, end_terms = self.termini_for(walk[0]), self.termini_for(walk[-1])
+        start = start_terms[0] + '_+' if self.direction(walk[0]) == 1 else start_terms[1] + '_-'
+        end = end_terms[1] + '_+' if self.direction(walk[-1]) == 1 else end_terms[0] + '_-'
+        return [start] + walk + [end]
+
+    def is_trans_chromosomal(self, edge: tuple[str, str]) -> bool:
+        return self.edges[edge].get('trans_chrom') is not None
 
     def parent_in_tree(self, node: str) -> str:
         if self.reference_tree.in_degree(node) == 0:
@@ -204,14 +220,32 @@ class PangenomeGraph(nx.DiGraph):
 
         logger.info("Loading W/P lines (walks)")
         walk_count = 0
+        selected_reference_haplotype = None
+        seen_reference_walks = set()
         for line in read_gfa_line_by_line(gfa_file, line_types=['W', 'P']):
-            # Check if haplotype name starts with ref_name (e.g., 'GRCh38#0#chr20' starts with 'GRCh38')
+            # Match the sample field; chromosome names come from its walks.
             hit_reference = line.sample_name == ref_name
             if hit_reference:
-                if G.reference_path:
-                    warnings.warn("Reference path already exists. Skipping additional reference walks.")
+                chrom = line.sequence_name or line.hap_name
+                if not line.walk:
+                    raise ValueError(f"Empty reference walk for {chrom!r}")
+                haplotype = '#'.join(line.hap_name.split('#')[:2])
+                identity = (chrom, haplotype)
+                if identity in seen_reference_walks:
+                    raise ValueError(f"Multiple reference walks for {chrom!r} and haplotype "
+                                     f"{haplotype!r}; select one intact walk per chromosome/haplotype")
+                seen_reference_walks.add(identity)
+                if selected_reference_haplotype is None:
+                    selected_reference_haplotype = haplotype
+                if haplotype != selected_reference_haplotype:
+                    warnings.warn(f"Multiple reference haplotypes; using first matching haplotype "
+                                  f"{selected_reference_haplotype!r}, ignoring walk {line.hap_name!r} "
+                                  "for tree selection")
                 else:
-                    G.add_reference_path(line.walk)
+                    G.reference_paths[chrom] = line.walk
+                    G.reference_starts[chrom] = line.contig_start
+                    if not G.reference_path:
+                        G.add_reference_path(line.walk)
 
             # Extract sample#haplotype from hap_name (format: sample#haplotype#contig)
             if line.sample_name in priority_dict:
@@ -233,6 +267,11 @@ class PangenomeGraph(nx.DiGraph):
 
         logger.info(f"Loaded {len(G.nodes) / 2:.0f} binodes, {G.number_of_biedges} biedges")
 
+        if len(G.reference_paths) > 1:
+            from .chromosomes import initialize_chromosomes
+            initialize_chromosomes(G, walk_start_nodes, walk_end_nodes, dfs_method)
+            return G
+
         assign_node_directions(G, G.reference_path)
 
         G.add_terminal_nodes(walk_start_nodes=walk_start_nodes, walk_end_nodes=walk_end_nodes)
@@ -246,6 +285,17 @@ class PangenomeGraph(nx.DiGraph):
         G.compute_binode_indices()
         G.compute_binode_positions()
         G.compute_binode_right_positions()
+        chrom = next(iter(G.reference_paths), 'chr0')
+        G.chromosome_termini = {chrom: G.termini}
+        G.reference_paths = {chrom: G.reference_path}
+        for node in G.nodes:
+            G.nodes[node]['chromosome'] = chrom
+        offset = G.reference_starts.get(chrom, 0)
+        if offset:
+            for node in G.nodes:
+                for key in ('position', 'right_position', 'tree_position'):
+                    G.nodes[node][key] += offset
+            G.position.cache_clear()
 
         return G
 
@@ -269,6 +319,10 @@ class PangenomeGraph(nx.DiGraph):
             reference_tree = nx.DiGraph()
         super().__init__(directed_graph)
         self.reference_path = reference_path if reference_path is not None else []
+        self.reference_paths: dict[str, list[str]] = {}
+        self.reference_starts: dict[str, int] = {}
+        self.chromosome_termini: dict[str, tuple[str, str]] = {}
+        self.terminal_binodes = set(self.termini)
         self.variant_edges = variant_edges if variant_edges is not None else set()
         self.haplo_priorities = haplo_priorities if haplo_priorities is not None else {}
         self.logger = logger if logger is not None else logging.getLogger('pantree')
@@ -289,6 +343,8 @@ class PangenomeGraph(nx.DiGraph):
                               ref: str | None = None,
                               alt: str | None = None,
                               ) -> str:
+        if self.is_trans_chromosomal(edge):
+            return 'BND'
         var_type = None
         if self.is_inversion(edge):
             if var_type is not None:
@@ -514,7 +570,7 @@ class PangenomeGraph(nx.DiGraph):
     def write_vcf(self,
                   gfa_path: Optional[str],
                   vcf_filename: str,
-                  chr_name: str,
+                  chr_name: str | None = None,
                   exclude_terminus: bool = True,
                   size_threshold: float = float('inf'),
                   check_degenerate: bool = False,
@@ -608,7 +664,7 @@ class PangenomeGraph(nx.DiGraph):
         """
         Adds a binode to the bidirected graph, comprising a node and its complement.
         """
-        original_ids = [] if str(binode) in {'+_terminus', '-_terminus'} else [str(binode)]
+        original_ids = [] if str(binode) in self.terminal_binodes else [str(binode)]
         node_data = {key: 0 for key in self.node_attribute_names}
         node_data['sequence'] = seq
         node_data['direction'] = 1
@@ -653,11 +709,27 @@ class PangenomeGraph(nx.DiGraph):
         return edge if self.edges[edge]['is_representative'] else edge_complement(edge)
 
     def reference_tree_edge(self, variant_edge):
+        if self.is_trans_chromosomal(variant_edge):
+            raise ValueError('Cross-chromosome edges can have multiple source-side baselines; use reference_tree_edges')
         _, v = self.positive_variant_edge(variant_edge)
         if self.is_inversion(variant_edge):
             v = self.positive_node(v)
         w = self.parent_in_tree(v)
         return w, v
+
+    def reference_tree_edges(self, variant_edge) -> list[tuple[str, str]]:
+        """Tree edges counted as the reference continuation of a variant.
+
+        A cross-chromosome breakend counts source-side continuations: outgoing
+        tree edges for a forward source, or the incoming edge for a reverse one.
+        """
+        if not self.is_trans_chromosomal(variant_edge):
+            return [self.reference_tree_edge(variant_edge)]
+        u = variant_edge[0]
+        source = self.positive_node(u)
+        if self.direction(u) == 1:
+            return list(self.reference_tree.out_edges(source))
+        return list(self.reference_tree.in_edges(source))
 
     def positive_variant_edge(self, edge: tuple):
         return edge if self.direction(edge[0]) == 1 or self.is_inversion(edge) else edge_complement(edge)
@@ -796,6 +868,8 @@ class PangenomeGraph(nx.DiGraph):
         :return: dict mapping variant edges to tuples (ref, alt)
         """
 
+        if self.is_trans_chromosomal(variant_edge):
+            raise ValueError('A cross-chromosome edge has no within-chromosome REF/ALT allele pair; export it with write_vcf')
         if self.is_in_tree(variant_edge):
             msg = "Ref and alt alleles are only defined for variant edges"
             self.logger.error(msg)
@@ -827,6 +901,8 @@ class PangenomeGraph(nx.DiGraph):
         :return: for every edge that is visited, the number of visits
         """
 
+        if len(self.chromosome_termini) > 1:
+            raise ValueError("count_edge_visits requires a single-chromosome graph; use genotypes_from_gfa for whole-genome walks")
         sinks: list[str] = []
         sources: dict[str, int] = {}
 
@@ -913,7 +989,11 @@ class PangenomeGraph(nx.DiGraph):
         nodes and whose edges are not back edges nor inversions.
         """
         positive_subgraph = self.subgraph([n for n, direction in self.nodes(data="direction") if direction == 1])
-        positive_subgraph_no_cycle = self.edge_subgraph([edge for edge in positive_subgraph.edges() if not self.is_back_edge(edge)])
+        positive_subgraph_no_cycle = nx.DiGraph()
+        positive_subgraph_no_cycle.add_nodes_from(positive_subgraph)
+        positive_subgraph_no_cycle.add_edges_from(
+            edge for edge in positive_subgraph.edges()
+            if not self.is_back_edge(edge) and not self.is_trans_chromosomal(edge))
         order = nx.topological_sort(positive_subgraph_no_cycle)
         for i, node in enumerate(order):
             self.nodes[node]['index'] = i
@@ -1196,6 +1276,8 @@ class PangenomeGraph(nx.DiGraph):
         edges remvoed if their combined allele length is less than the minimum, with
         'tips' removed, and with 'paths' contracted."""
 
+        if len(self.chromosome_termini) > 1:
+            raise ValueError("simplify_subgraph requires a single-chromosome input")
         subgraph = self.delete_small_variants(pos_range, minimum_allele_length)
         assert not nx.is_empty(subgraph), "Invalid position range: Empty subgraph."
         if endpoints is None:

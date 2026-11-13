@@ -2,55 +2,62 @@ import itertools
 import warnings
 import networkx as nx
 from .utils import node_complement
-import operator
 
-# TODO de-duplicate logic between DFS functions
 # TODO add edge-weight priority as tiebreaker
 # TODO turn haplo_labels list into dict with value = priority, allowing ties
 # TODO add new positions to VCF
 
-def max_weight_dfs_tree(G: nx.DiGraph,
-                        reference_path: list, **kwargs) -> nx.DiGraph:
+def _reference_forest(G, reference_path, reference_paths, neighbors, next_label,
+                      reference_owners=None):
+    """Ordinary stack DFS, draining one protected chromosome root at a time.
+
+    Only roots are seeded. Reference successors change scheduling, never parentage.
+    Ownership reservations prevent a traversal from consuming another reference.
     """
-    Perform a depth-first search (DFS) prioritizing higher weight edges and return a DFS tree.
-    :param G: A NetworkX directed graph
-    :param reference_path: A list of nodes in the reference path, beginning with source node
-    :return: A DFS spanning tree of G
-    """
-    dfs_tree = nx.DiGraph()
+    paths = reference_paths if reference_paths is not None else [reference_path]
+    paths = [path for path in paths if path]
+    owners = dict(reference_owners or {})
+    for path in paths:
+        root = path[0]
+        for node in path:
+            if node in G:
+                owners.setdefault(node, root)
+    tree = nx.DiGraph()
     visited = set()
-    stack = []
-    reference_successors, revisit_steps = _reference_successors(G, reference_path)
+    for path in paths:
+        root = path[0]
+        successors, revisits = _reference_successors(G, path)
+        stack = [(None, root, 'other')]
+        while stack:
+            parent, node, label = stack.pop()
+            if node in visited or owners.get(node, root) != root:
+                continue
+            visited.add(node)
+            tree.add_node(node)
+            if parent is not None:
+                assert G.has_edge(parent, node)
+                tree.add_edge(parent, node)
+                label = next_label(parent, node, label)
+            targets = neighbors(node, label)
+            # The last stack item is visited first. All scheduled edges exist in G.
+            targets += list(reversed(successors.get(node, ())))
+            for target in targets:
+                if target not in visited and owners.get(target, root) == root:
+                    stack.append((node, target, label))
+        if revisits:
+            _warn_cyclic_reference(G, path, revisits, tree)
+    return tree
 
-    def visit_node(parent, current_node):
-        # visit current_node
-        visited.add(current_node)
-        if parent is not None:
-            assert G.has_edge(parent, current_node)
-            dfs_tree.add_edge(parent, current_node)
 
-        # Sort neighbors by descending edge weight
-        neighbors = sorted(G.edges(current_node, data=True), key=lambda x: (x[2]['weight'], x[1]), reverse=False)
-
-        # Last-added edges will be visited first
-        for _, neighbor, _ in neighbors:
-            if neighbor not in visited:
-                stack.append((current_node, neighbor))
-        # Reference successors go on top, so the search follows the reference walk wherever it can
-        for neighbor in reversed(reference_successors.get(current_node, ())):
-            if neighbor not in visited:
-                stack.append((current_node, neighbor))
-
-    visit_node(None, reference_path[0])
-    while stack:
-        parent, current_node = stack.pop()
-        if current_node not in visited:
-            visit_node(parent, current_node)
-
-    if revisit_steps:
-        _warn_cyclic_reference(G, reference_path, revisit_steps, dfs_tree)
-
-    return dfs_tree
+def max_weight_dfs_tree(G: nx.DiGraph, reference_path: list,
+                        reference_paths: list[list] | None = None,
+                        reference_owners=None, **kwargs) -> nx.DiGraph:
+    """DFS forest prioritizing reference successors, then higher edge weights."""
+    def neighbors(node, label):
+        return [v for _, v, _ in sorted(G.edges(node, data=True),
+                                       key=lambda x: (x[2]['weight'], x[1]))]
+    return _reference_forest(G, reference_path, reference_paths, neighbors,
+                             lambda u, v, label: label, reference_owners)
 
 def _reference_successors(G: nx.DiGraph, reference_path: list) -> tuple[dict, list]:
     """
@@ -115,7 +122,7 @@ def _warn_cyclic_reference(G: nx.DiGraph, reference_path: list, revisit_steps: l
     )
 
 def assign_node_directions(G: nx.DiGraph,
-                        reference_path: list) -> None:
+                        reference_path: list, reference_paths: list[list] | None = None) -> None:
     """
     Perform a depth-first search (DFS) prioritizing higher weight edges and return a DFS tree.
 
@@ -149,12 +156,9 @@ def assign_node_directions(G: nx.DiGraph,
             stack.append((current_node, neighbor, current_direction))
 
     # Initialize the search at the linear reference path so that these nodes all have the same orientation
-    for i in range(len(reference_path)):
-        if i == 0:
-            reference_edge = (None, reference_path[0])
-        else:
-            reference_edge = (reference_path[i - 1], reference_path[i])
-        visit_node(*reference_edge, 1)
+    for path in reference_paths or [reference_path]:
+        for i, node in enumerate(path):
+            visit_node(None if i == 0 else path[i - 1], node, 1)
 
     component_seeds = iter(sorted(unvisited))
     while True:
@@ -167,14 +171,15 @@ def assign_node_directions(G: nx.DiGraph,
         if num_unvisited == 0:
             break
         print(f'Visiting another connected component, with at most {num_unvisited} nodes')
-        # Scan the stable order once; visit_node must remove the seed and its complement.
+        # Scan the stable order once; visit_node removes the seed and its complement.
         unvisited_node = next(node for node in component_seeds if node in unvisited)
         visit_node(None, unvisited_node, 1)
 
 
 def haplo_contiguous_dfs_tree(G: nx.DiGraph,
                         haplo_priorities: dict[str, int],
-                        reference_path: list) -> nx.DiGraph:
+                        reference_path: list, reference_paths: list[list] | None = None,
+                        reference_owners=None) -> nx.DiGraph:
 
     # Sort haplotype labels by priority (lower priority value = higher precedence)
     # Ties are allowed (same priority value)
@@ -211,58 +216,15 @@ def haplo_contiguous_dfs_tree(G: nx.DiGraph,
         neighbors = sorted(priority.keys(), key=lambda x: (priority[x], x), reverse=True)
         return neighbors
 
-    def visit_node(parent, current_node, haplo_label):
-        if current_node in visited:
-            return
+    def next_label(parent, node, current):
+        edge_data = G.edges[parent, node]
+        if current in edge_data and current != 'other':
+            return current
+        return next((label for label in haplo_labels if label in edge_data), 'other')
 
-        # visit current_node
-        visited.add(current_node)
-        # Add the node to the tree even if it has no parent
-        if current_node not in dfs_tree:
-            dfs_tree.add_node(current_node)
-
-        if parent is not None:
-            assert G.has_edge(parent, current_node)
-            dfs_tree.add_edge(parent, current_node)
-
-            # Determine which haplotype label this edge belongs to
-            edge_data = G.edges[(parent, current_node)]
-
-            # Check if edge has any priority haplotype
-            found_label = None
-            for label in haplo_labels:
-                if label in edge_data:
-                    found_label = label
-                    break
-
-            # If found a priority haplotype, use it; otherwise use 'other'
-            haplo_label = found_label if found_label else 'other'
-
-        # Get neighbors sorted by priority
-        neighbors = get_neighbors(G, current_node, haplo_label)
-
-        # Last-added edges will be visited first
-        for neighbor in neighbors:
-            if neighbor not in visited:
-                stack.append((current_node, neighbor, haplo_label))
-
-
-    dfs_tree = nx.DiGraph()
-    visited = set()
-    stack = []
-
-    for i in range(len(reference_path)):
-        if i == 0:
-            reference_edge = (None, reference_path[0])
-        else:
-            reference_edge = (reference_path[i - 1], reference_path[i])
-        visit_node(*reference_edge, haplo_labels[0])
-
-    while stack:
-        tup = stack.pop()
-        visit_node(*tup)
-
-    return dfs_tree
+    return _reference_forest(G, reference_path, reference_paths,
+                             lambda node, label: get_neighbors(G, node, label),
+                             next_label, reference_owners)
 
 
 # Dictionary of available DFS methods, defined after all functions

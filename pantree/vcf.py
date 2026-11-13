@@ -42,15 +42,19 @@ class _VariantData:
 
     @property
     def needs_prepend(self) -> bool:
+        if self.edge_data.get('trans_chrom') is not None:
+            return False
         return (len(self.ref_allele_raw) == 0 or len(self.alt_allele_raw) == 0) \
             and self.node_v_data['on_reference_path']
 
     @property
     def is_degenerate(self) -> bool:
         """Check if ref and alt alleles are identical after VCF formatting."""
-        return self.ref_allele_raw == self.alt_allele_raw
+        return self.edge_data.get('trans_chrom') is None and self.ref_allele_raw == self.alt_allele_raw
 
     def get_variant_position(self, position_field: str) -> int:
+        if self.edge_data.get('trans_chrom') is not None:
+            return self.context.get('trans_position') if position_field == 'position' else self.node_u_data.get(position_field)
         branch_position = self.branch_point_node_data.get(position_field)
         if branch_position is None:
             return None
@@ -59,7 +63,7 @@ class _VariantData:
     @staticmethod
     def compute_allele_counts(sample_to_genotype: dict,
                              variant_edge: tuple[str, str],
-                             ref_edge_idx: int) -> tuple[int, int]:
+                             ref_edge_idx: int | list[int]) -> tuple[int, int]:
         """Compute ref and alt allele counts from genotype data.
 
         Args:
@@ -87,7 +91,7 @@ class _VariantData:
     def from_graph(cls,
                    graph: "PangenomeGraph",
                    edge: tuple[str, str],
-                   reference_edge: tuple[str, str],
+                   reference_edge: tuple[str, str] | None,
                    chr_name: str,
                    sample_to_genotype: dict,
                    size_threshold: float = float('inf'),
@@ -95,7 +99,12 @@ class _VariantData:
         """Compute variant information from a graph and variant edge."""
 
         # Get ref/alt alleles and branch point
-        ref_allele_raw, alt_allele_raw, _, branch_point = graph.ref_alt_alleles(edge)
+        trans = graph.is_trans_chromosomal(edge)
+        if trans:
+            ref_allele_raw, alt_allele_raw = '', ''
+            branch_point = graph.positive_node(edge[0])
+        else:
+            ref_allele_raw, alt_allele_raw, _, branch_point = graph.ref_alt_alleles(edge)
 
         # Check if ref allele is on forward reference path
         u, v = edge
@@ -111,12 +120,12 @@ class _VariantData:
         branch_point_node_data = dict(graph.nodes[branch_point])
 
         # Compute and store repeat motif
-        motif = graph.annotate_repeat_motif(edge, ref_allele_raw, alt_allele_raw, branch_point)
+        motif = None if trans else graph.annotate_repeat_motif(edge, ref_allele_raw, alt_allele_raw, branch_point)
         edge_data['motif'] = motif
 
         # Compute allele counts from genotype data
         if sample_to_genotype:
-            ref_edge_idx = int(graph.edges[reference_edge]['index'])
+            ref_edge_idx = [int(graph.edges[e]['index']) for e in graph.reference_tree_edges(edge)]
             ref_allele_count, alt_allele_count = cls.compute_allele_counts(
                 sample_to_genotype, edge, ref_edge_idx
             )
@@ -135,6 +144,21 @@ class _VariantData:
             'filter_field': 'PASS',
             'format_field': 'GT:CR:CA'
         }
+        if trans:
+            # Export a single breakend at the source's reference-tree anchor.
+            # TRANS_CHROM identifies the other chromosome without inventing a
+            # precise partner breakpoint for an off-reference graph endpoint.
+            anchor = graph.positive_node(u)
+            while not graph.on_reference_path(anchor):
+                anchor = graph.parent_in_tree(anchor)
+            sequence = graph.nodes[anchor]['sequence']
+            position = graph.position(anchor)
+            at_reference_start = graph.on_reference_path(u) and graph.direction(u) == -1
+            if at_reference_start:
+                position -= max(0, len(sequence) - 1)
+            base = (sequence[0] if at_reference_start else sequence[-1]) if sequence else 'N'
+            default_context.update(trans_position=max(1, position), trans_ref=base,
+                                   trans_alt=base + '.' if graph.direction(u) == 1 else '.' + base)
         # Merge with any user-provided context overrides
         context = {**default_context, **kwargs.get('context', {})}
 
@@ -203,12 +227,16 @@ class _VariantRecord:
             variant_info.node_u_data.get('direction', 1) == 1 and variant_info.node_v_data.get('on_reference_path', 1) == 1,
             variant_info.context.get('size_threshold')
         )
+        if variant_info.edge_data.get('trans_chrom') is not None:
+            ref_allele = variant_info.context['trans_ref']
+            alt_allele = variant_info.context['trans_alt']
 
         # Build INFO field
         info_parts = []
         for field in info_fields:
             value = field.evaluate(variant_info)
-            info_parts.append(f"{field.id}={value}")
+            if value is not None:
+                info_parts.append(f"{field.id}={value}")
         info = ';'.join(info_parts)
 
         # Build variant ID
@@ -265,7 +293,7 @@ class _InfoField:
     number: str
     type: str
     description: str
-    evaluate: Callable[[_VariantData], str]
+    evaluate: Callable[[_VariantData], str | None]
 
     def get_header(self) -> str:
         """Return the VCF header line for this INFO field."""
@@ -332,6 +360,8 @@ def _get_default_info_fields() -> list[_InfoField]:
     info_fields.append(_InfoField("NR", "1", "String", "Non-reference allele", _eval_non_reference_allele))
 
     def _eval_variant_type(variant_info: _VariantData) -> str:
+        if variant_info.edge_data.get('trans_chrom') is not None:
+            return 'BND'
         if variant_info.node_u_data['direction'] != variant_info.node_v_data['direction']:
             return 'INV'
 
@@ -395,7 +425,9 @@ def _get_default_info_fields() -> list[_InfoField]:
         return motif if motif is not None else '.'
     info_fields.append(_InfoField("TR_MOTIF", "1", "String", "Tandem repeat motif", _eval_tandem_repeat_motif))
 
-    def _eval_nearly_identical_alleles(variant_info: _VariantData) -> str:
+    def _eval_nearly_identical_alleles(variant_info: _VariantData) -> str | None:
+        if variant_info.edge_data.get('trans_chrom') is not None:
+            return None
         ref_allele, alt_allele = _compute_vcf_alleles(variant_info)
         nia = int(nearly_identical_alleles(ref_allele, alt_allele))
         return str(nia)
@@ -405,12 +437,20 @@ def _get_default_info_fields() -> list[_InfoField]:
         return str(variant_info.node_u_data['index'])
     info_fields.append(_InfoField("UIDX", "1", "Integer", "Index of node u", _eval_u_index))
 
+    info_fields.append(_InfoField(
+        "TRANS_CHROM", "1", "String",
+        "Chromosome assigned to destination v when it differs from source u; assignment depends on the reference tree",
+        lambda variant_info: variant_info.edge_data.get('trans_chrom')))
+    info_fields.append(_InfoField(
+        "SVTYPE", "1", "String", "Structural variant type",
+        lambda variant_info: 'BND' if variant_info.edge_data.get('trans_chrom') is not None else None))
+
     return info_fields
 
 
 def _build_genotype_record(variant_edge: tuple[str, str],
-                            reference_edge: tuple[str, str],
-                            ref_edge_idx: int,
+                            reference_edge: tuple[str, str] | None,
+                            ref_edge_idx: int | list[int],
                             sample_to_genotype: dict[str, tuple],
                             is_inversion: bool,
                             sample_order: list[str]
@@ -457,7 +497,7 @@ def _build_genotype_record(variant_edge: tuple[str, str],
 
 
 
-def _build_vcf_header(chr_name: str,
+def _build_vcf_header(chr_name: str | list[str],
                          info_fields: list[_InfoField],
                          sample_ids: list[str]) -> str:
     """Generate VCF header including metadata and column names.
@@ -482,7 +522,8 @@ def _build_vcf_header(chr_name: str,
     for field in info_fields:
         meta_info += field.get_header() + '\n'
 
-    meta_info += f'##contig=<ID={chr_name}>\n'
+    for chrom in [chr_name] if isinstance(chr_name, str) else chr_name:
+        meta_info += f'##contig=<ID={chrom}>\n'
 
     # Add column header line
     header_names = ['CHROM', 'POS', 'ID', 'REF', 'ALT', 'QUAL', 'FILTER', 'INFO']
@@ -497,7 +538,7 @@ def write_vcf_from_graph(
     graph: "PangenomeGraph",
     gfa_path: Optional[str],
     vcf_filename: str,
-    chr_name: str,
+    chr_name: str | None,
     logger: logging.Logger,
     exclude_terminus: bool = True,
     size_threshold: float = float('inf'),
@@ -522,10 +563,13 @@ def write_vcf_from_graph(
     """
     logger.info(f"Start generating vcf")
 
+    chromosomes = list(graph.chromosome_termini) or ['chr0']
+    if chr_name is not None and len(chromosomes) > 1:
+        raise ValueError('--chr-id / chr_name can only override a single-chromosome input; omit it for automatic chromosome labels')
+    labels = {chrom: chr_name if chr_name is not None else chrom for chrom in chromosomes}
+
     if info_fields is None:
         info_fields = _get_default_info_fields()
-
-    reference_edges = graph.get_reference_edges()
 
     if gfa_path:
         logger.info(f"Getting genotypes from GFA file: {gfa_path}")
@@ -535,24 +579,24 @@ def write_vcf_from_graph(
 
     sample_ids = list(sample_to_genotype.keys())
 
-    vcf_header = _build_vcf_header(chr_name, info_fields, sample_ids)
+    vcf_header = _build_vcf_header(sorted(labels.values()), info_fields, sample_ids)
 
     logger.info(f"Writing vcf: {vcf_filename}")
 
     vcf_records = []
     for u, v in graph.sorted_variant_edges(exclude_terminus=exclude_terminus):
-        reference_edge = reference_edges[(u, v)]
-
-        if graph.direction(u) == -1 and graph.direction(v) == -1:
+        if graph.direction(u) == -1 and graph.direction(v) == -1 and not graph.is_trans_chromosomal((u, v)):
             u, v = edge_complement((u, v))
         edge = (u, v)
+        baseline_edges = graph.reference_tree_edges(edge)
+        reference_edge = graph.representative_edge(baseline_edges[0]) if baseline_edges else None
 
         # Create _VariantData from graph
         variant_info = _VariantData.from_graph(
             graph=graph,
             edge=edge,
             reference_edge=reference_edge,
-            chr_name=chr_name,
+            chr_name=labels[graph.chromosome(u)],
             sample_to_genotype=sample_to_genotype,
             size_threshold=size_threshold
         )
@@ -564,7 +608,7 @@ def write_vcf_from_graph(
         # Build genotype records for this edge if samples provided
         if sample_to_genotype:
             is_inversion = variant_info.edge_data.get('is_inversion', False)
-            ref_edge_idx = int(graph.edges[reference_edge]['index'])
+            ref_edge_idx = [int(graph.edges[e]['index']) for e in baseline_edges]
             genotype_records = _build_genotype_record(
                 variant_edge=edge,
                 reference_edge=reference_edge,

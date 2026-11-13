@@ -34,12 +34,12 @@ def test_revisited_segments_keep_first_positions(fixture, length, last_third,
     for segment, position in expected.items():
         for orientation in ['+', '-']:
             data = graph.nodes[f'{segment}_{orientation}']
-            assert data['position'] == position
-            assert data['tree_position'] == position
-            assert data['right_position'] == position
+            assert data['position'] == contig_start + position
+            assert data['tree_position'] == contig_start + position
+            assert data['right_position'] == contig_start + position
 
-    # This base uses W offsets only for haplotype annotations, which retain
-    # their existing last-occurrence convention independently of reference positions.
+    # PR24 supplies the W origin for reference coordinates too. Haplotype
+    # annotations retain their separate last-occurrence convention.
     for segment, last_position in [('1', 8), ('2', 32),
                                    ('3', last_third), ('4', length)]:
         for orientation in ['+', '-']:

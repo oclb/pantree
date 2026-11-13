@@ -224,6 +224,10 @@ def process_haplotype_variants(
     filter_cond = pl.col("haplotype_gt") == "1"
     vcf_filtered = vcf_filtered.filter(filter_cond)
 
+    if 'TRANS_CHROM' in vcf_filtered.collect_schema().names():
+        if vcf_filtered.filter(pl.col('TRANS_CHROM').is_not_null()).limit(1).collect().height:
+            raise ValueError('Consolidation of cross-chromosome variants is not supported; selected haplotype contains TRANS_CHROM records')
+
     # Replace REF with NR when NR is not '.'
     # NR contains the actual reference allele for variants off the linear reference
     # Only do this if NR column exists
