@@ -93,9 +93,12 @@ class PangenomeGraph(nx.DiGraph):
         """Next unused index, copied with graph metadata and shared by live views."""
         key = '_pantree_biedge_index_capacity'
         if key not in self.graph:
-            # Recover once if a caller clears graph-level metadata.
+            # Views share metadata with their source, so recover its complete index space.
+            owner = self
+            while hasattr(owner, '_graph'):
+                owner = owner._graph
             self.graph[key] = 1 + max(
-                (int(data['index']) for _, _, data in self.edges(data=True)), default=-1)
+                (int(data['index']) for _, _, data in owner.edges(data=True)), default=-1)
         return self.graph[key]
 
     @biedge_index_capacity.setter
@@ -272,8 +275,13 @@ class PangenomeGraph(nx.DiGraph):
         self.number_of_biedges = sum(bool(data.get('is_representative'))
                                     for _, _, data in self.edges(data=True))
         # Scan once when wrapping an existing graph, rather than once per haplotype.
-        self.biedge_index_capacity = 1 + max(
+        index_capacity = 1 + max(
             (int(data['index']) for _, _, data in self.edges(data=True)), default=-1)
+        # NetworkX copies populate an initially empty instance after this constructor.
+        # Leave missing metadata recoverable rather than caching a premature zero.
+        if index_capacity:
+            self.biedge_index_capacity = max(
+                index_capacity, self.graph.get('_pantree_biedge_index_capacity', 0))
         self.walks = walks if walks is not None else {}
 
     def identify_variant_type(self,

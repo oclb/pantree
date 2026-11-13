@@ -139,6 +139,64 @@ def test_index_capacity_recovers_after_clearing_graph_metadata():
         assert graph.genotype(['1_+', '2_+', '3_+']).ref_visited.tolist() == expected.ref_visited.tolist()
 
 
+@pytest.mark.parametrize('operation', ['copy', 'view_copy', 'deepcopy', 'constructor'])
+@pytest.mark.parametrize('sparse', [False, True])
+def test_metadata_free_copy_recovers_from_populated_indices(operation, sparse):
+    graph = PangenomeGraph.from_gfa(str(DATA / 'no_variants.gfa'), ref_name='ref')
+    if sparse:
+        for _, _, data in graph.edges(data=True):
+            data['index'] = 100 + 7 * data['index']
+        graph = PangenomeGraph(nx.DiGraph(graph))
+    walk = ['1_+', '2_+', '3_+']
+    expected = graph.genotype(walk)
+    graph.graph.clear()
+    if operation == 'copy':
+        copied = graph.copy()
+    elif operation == 'view_copy':
+        copied = graph.subgraph([node for node in graph if node.endswith('_+')]).copy()
+    elif operation == 'deepcopy':
+        copied = deepcopy(graph)
+    else:
+        copied = PangenomeGraph(nx.DiGraph(graph))
+    # The source getter has not run since metadata was cleared.
+    assert copied.biedge_index_capacity == expected.num_edges
+    with patch.object(type(copied.edges), '__call__', side_effect=AssertionError('edge scan')):
+        for _ in range(3):
+            assert copied.genotype(walk).ref_visited.tolist() == expected.ref_visited.tolist()
+    copied.add_biedge('1_+', '3_+')
+    assert copied.edges['1_+', '3_+']['index'] == expected.num_edges
+
+
+@pytest.mark.parametrize('operation', ['nodes', 'edges', 'chained'])
+@pytest.mark.parametrize('sparse', [False, True])
+def test_metadata_free_filtered_view_recovers_the_owning_index_space(operation, sparse):
+    graph = PangenomeGraph.from_gfa(str(DATA / 'no_variants.gfa'), ref_name='ref')
+    if sparse:
+        for _, _, data in graph.edges(data=True):
+            data['index'] = 100 + 7 * data['index']
+        graph = PangenomeGraph(nx.DiGraph(graph))
+    walk = ['1_+', '2_+', '3_+']
+    expected = graph.genotype(walk)
+    if operation == 'nodes':
+        view = graph.subgraph(['1_+', '2_+'])
+    elif operation == 'edges':
+        view = graph.edge_subgraph([('1_+', '2_+')])
+    else:
+        view = graph.subgraph(['1_+', '2_+']).edge_subgraph([('1_+', '2_+')]).copy(as_view=True)
+    occupied_indices = {data['index'] for _, _, data in graph.edges(data=True)}
+    graph.graph.clear()
+    # Access the filtered view first: its single edge does not define the source's capacity.
+    assert view.biedge_index_capacity == expected.num_edges
+    assert graph.genotype(walk).ref_visited.tolist() == expected.ref_visited.tolist()
+    graph.add_biedge('1_+', '3_+')
+    assert graph.edges['1_+', '3_+']['index'] not in occupied_indices
+    assert graph.edges['1_+', '3_+']['index'] == expected.num_edges
+    with patch.object(type(graph.edges), '__call__', side_effect=AssertionError('edge scan')):
+        for _ in range(3):
+            assert view.biedge_index_capacity == expected.num_edges + 1
+            assert graph.genotype(walk).ref_visited.tolist() == expected.ref_visited.tolist() + [False]
+
+
 @pytest.mark.parametrize('reverse_loop', [False, True])
 def test_repeated_self_edges_exact_genotypes_and_emitted_alleles(tmp_path, reverse_loop):
     source = tmp_path / 'repeated.gfa'
