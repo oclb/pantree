@@ -17,7 +17,7 @@ def cli():
 @cli.command(name='gfa2vcf', context_settings={"help_option_names": ["-h", "--help"]})
 @click.argument("gfa_file")
 @click.argument("vcf_file")
-@click.option("--chr-id", "-c", default="chr0", help="Chromosome ID for VCF output")
+@click.option("--chr-id", "-c", default=None, help="Override the VCF chromosome label for a single-chromosome input; otherwise infer from reference walks")
 @click.option("--ref-name", "-r", default="GRCh38", help="Reference sample name")
 @click.option("--no-genotypes", is_flag=True, help="Do not put genotypes in VCF")
 @click.option("--log-path", default=None, help="Path to log file")
@@ -67,6 +67,8 @@ def gfa2vcf(gfa_file, vcf_file, chr_id, ref_name, no_genotypes, log_path, verbos
         dfs_method=dfs_method_func,
         priority_dict=priority_dict
     )
+    if not G.reference_starts:
+        raise click.ClickException(f"No reference walks found for sample {ref_name!r}")
 
     # Generate VCF
     if no_genotypes:

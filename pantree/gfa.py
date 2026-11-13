@@ -13,6 +13,7 @@ class GFAWalkLine:
     sample_name: str
     contig_start: int
     walk: list[str]
+    sequence_name: str | None = None
 
     @staticmethod
     def _get_hap_name(parts: list[str]) -> str:
@@ -21,10 +22,12 @@ class GFAWalkLine:
     @classmethod
     def from_parts_P(cls, parts: list[str]):
         hap_name = parts[1]
-        sample_name = parts[1]
+        name_parts = hap_name.split('#', 2)
+        sample_name = name_parts[0] if len(name_parts) == 3 else hap_name
         contig_start = 0
         walk = cls._parse_P_walk(parts[2])
-        return cls(hap_name, sample_name, contig_start, walk)
+        sequence_name = name_parts[2] if len(name_parts) == 3 else hap_name
+        return cls(hap_name, sample_name, contig_start, walk, sequence_name)
 
     @classmethod
     def from_parts_W(cls, parts: list[str]):
@@ -32,7 +35,7 @@ class GFAWalkLine:
         sample_name = parts[1]
         contig_start = int(parts[4]) if parts[4] != '*' else 0 # TODO
         walk = cls._parse_W_walk(parts[6])
-        return cls(hap_name, sample_name, contig_start, walk)
+        return cls(hap_name, sample_name, contig_start, walk, parts[3])
 
     @staticmethod
     def _parse_P_walk(segment_names: str) -> list[str]:

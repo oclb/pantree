@@ -1,0 +1,11 @@
+H	VN:Z:1.1
+S	s	AA
+S	a	ACG
+S	z	CC
+L	s	+	a	+	0M
+L	a	+	z	+	0M
+L	a	+	a	-	0M
+L	a	-	a	+	0M
+L	a	+	a	+	0M
+W	ref	0	chr1	0	7	>s>a>z
+W	ALT	0	chr1	0	28	>s>a>a<a<a>a<a>a>a>z
