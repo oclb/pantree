@@ -12,6 +12,7 @@ import networkx as nx
 import pytest
 
 from pantree.graph import PangenomeGraph
+from pantree.genotype import Genotype
 from pantree.gfa import read_gfa_line_by_line
 from pantree.utils import edge_complement, node_complement, sequence_complement
 from pantree.write_gfa import write_GFA
@@ -195,6 +196,32 @@ def test_metadata_free_filtered_view_recovers_the_owning_index_space(operation, 
         for _ in range(3):
             assert view.biedge_index_capacity == expected.num_edges + 1
             assert graph.genotype(walk).ref_visited.tolist() == expected.ref_visited.tolist() + [False]
+
+
+@pytest.mark.parametrize(('fixture', 'hidden', 'walk'), [
+    ('no_variants.gfa', ('1_+', '2_+'), ['3_-', '2_-', '1_-']),
+    ('self_edge_repeated.gfa', ('a_+', 'a_+'), ['z_-', 'a_-', 'a_-', 'a_-', 's_-']),
+])
+def test_verifiers_accept_filtered_views_without_the_representative(fixture, hidden, walk):
+    graph = PangenomeGraph.from_gfa(str(DATA / fixture), ref_name='ref')
+    view = graph.edge_subgraph([edge for edge in graph.edges if edge != hidden])
+    assert not view.has_edge(*hidden)
+    genotype = view.genotype(walk)
+    assert Genotype.verify_genotype_matches_walk(view, walk, genotype) == (True, [])
+    assert Genotype.verify_genotype_matches_walks(view, [walk], genotype) == (True, [])
+    combined = deepcopy(genotype)
+    combined.update(genotype)
+    assert Genotype.verify_genotype_matches_walks(view, [walk, walk], combined) == (True, [])
+
+    # The helpers still reject an undercount rather than simply accepting filtered views.
+    bad = deepcopy(genotype)
+    if hidden in bad.alt_counts:
+        bad.alt_counts[hidden] = 0
+    else:
+        index = view.edges[walk[0], walk[1]]['index']
+        bad.ref_visited[index] = False
+    assert Genotype.verify_genotype_matches_walk(view, walk, bad)[0] is False
+    assert Genotype.verify_genotype_matches_walks(view, [walk], bad)[0] is False
 
 
 @pytest.mark.parametrize('reverse_loop', [False, True])

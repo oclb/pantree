@@ -213,21 +213,22 @@ class Genotype:
                 errors.append(f"Walk contains edge {e} which is not in the graph")
                 continue
                 
-            e = graph.representative_edge(e)
-            if graph.edges[e]['is_in_tree']:
-                expected_ref[e] = expected_ref.get(e, 0) + 1
+            edge_data = graph.edges[e]
+            if edge_data['is_in_tree']:
+                edge_idx = int(edge_data['index'])
+                expected_ref[edge_idx] = expected_ref.get(edge_idx, 0) + 1
             else:
+                e = graph.representative_edge(e)
                 expected_alt[e] = expected_alt.get(e, 0) + 1
         
         # Compare expected vs actual ref counts
         expected_ref_indices = set()
-        for edge, expected_count in expected_ref.items():
-            edge_idx = int(graph.edges[edge]['index'])
+        for edge_idx, expected_count in expected_ref.items():
             expected_ref_indices.add(edge_idx)
             actual_count = genotype.get_ref_count(edge_idx)
             if actual_count < expected_count:
                 errors.append(
-                    f"Ref edge {edge}: expected count >= {expected_count}, got {actual_count}"
+                    f"Ref edge index {edge_idx}: expected count >= {expected_count}, got {actual_count}"
                 )
         Genotype._check_extra_ref_edges(graph, genotype, expected_ref_indices, errors)
         
@@ -276,21 +277,22 @@ class Genotype:
                     errors.append(f"Walk contains edge {e} which is not in the graph")
                     continue
                     
-                e = graph.representative_edge(e)
-                if graph.edges[e]['is_in_tree']:
-                    expected_ref[e] = expected_ref.get(e, 0) + 1
+                edge_data = graph.edges[e]
+                if edge_data['is_in_tree']:
+                    edge_idx = int(edge_data['index'])
+                    expected_ref[edge_idx] = expected_ref.get(edge_idx, 0) + 1
                 else:
+                    e = graph.representative_edge(e)
                     expected_alt[e] = expected_alt.get(e, 0) + 1
         
         # Compare expected vs actual ref counts
         expected_ref_indices = set()
-        for edge, expected_count in expected_ref.items():
-            edge_idx = int(graph.edges[edge]['index'])
+        for edge_idx, expected_count in expected_ref.items():
             expected_ref_indices.add(edge_idx)
             actual_count = genotype.get_ref_count(edge_idx)
             if actual_count != expected_count:
                 errors.append(
-                    f"Ref edge {edge}: expected count {expected_count}, got {actual_count}"
+                    f"Ref edge index {edge_idx}: expected count {expected_count}, got {actual_count}"
                 )
         Genotype._check_extra_ref_edges(graph, genotype, expected_ref_indices, errors)
         
